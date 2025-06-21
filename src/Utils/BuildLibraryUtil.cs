@@ -15,21 +15,22 @@ using System.Threading.Tasks;
 
 namespace Soenneker.Git.Runners.Linux.Utils;
 
-///<inheritdoc cref="IBuildLibraryUtil"/>
+/// <inheritdoc cref="IBuildLibraryUtil"/>
 public sealed class BuildLibraryUtil : IBuildLibraryUtil
 {
+    private const string ReproEnv = "SOURCE_DATE_EPOCH=1620000000 TZ=UTC LC_ALL=C";
+
+    private const string InstallScript = "sudo apt-get update && " +
+                                         "sudo apt-get install -y build-essential musl-tools pkg-config libcurl4-openssl-dev libssl-dev libexpat1-dev zlib1g-dev tcl-dev tk-dev perl libperl-dev libreadline-dev gettext";
+
     private readonly ILogger<BuildLibraryUtil> _logger;
     private readonly IDirectoryUtil _directoryUtil;
     private readonly IHttpClientCache _httpClientCache;
     private readonly IFileDownloadUtil _fileDownloadUtil;
     private readonly IProcessUtil _processUtil;
 
-    public BuildLibraryUtil(
-        ILogger<BuildLibraryUtil> logger,
-        IDirectoryUtil directoryUtil,
-        IHttpClientCache httpClientCache,
-        IFileDownloadUtil fileDownloadUtil,
-        IProcessUtil processUtil)
+    public BuildLibraryUtil(ILogger<BuildLibraryUtil> logger, IDirectoryUtil directoryUtil, IHttpClientCache httpClientCache,
+        IFileDownloadUtil fileDownloadUtil, IProcessUtil processUtil)
     {
         _logger = logger;
         _directoryUtil = directoryUtil;
@@ -55,59 +56,32 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
 
         // 4) install native build dependencies
         _logger.LogInformation("Installing native build dependencies…");
-        var installScript =
-            "sudo apt-get update && "
-            + "sudo apt-get install -y "
-            + "build-essential "
-            + "musl-tools "
-            + "pkg-config "
-            + "libcurl4-openssl-dev "
-            + "libssl-dev "
-            + "libexpat1-dev "
-            + "zlib1g-dev "
-            + "tcl-dev "
-            + "tk-dev "
-            + "perl "
-            + "libperl-dev "
-            + "libreadline-dev "
-            + "gettext";
-        await _processUtil.ShellRun(installScript, tempDir, cancellationToken);
+        await _processUtil.ShellRun(InstallScript, tempDir, cancellationToken);
 
-        // 5) extract Git source
+        // 5) extract with fixed timestamps, ownership, order
         _logger.LogInformation("Extracting Git source…");
-        await _processUtil.ShellRun($"tar -xzf {archivePath}", tempDir, cancellationToken);
+        await _processUtil.ShellRun($"{ReproEnv} tar --sort=name --mtime=@1620000000 --owner=0 --group=0 --numeric-owner -xzf {archivePath}", tempDir,
+            cancellationToken);
 
-        // Prepare paths
+        // derive extract path
         string versionTrimmed = latestVersion.TrimStart('v');
         string extractPath = Path.Combine(tempDir, $"git-{versionTrimmed}");
 
         // 6) generate configure script
         _logger.LogInformation("Generating configure script…");
-        await _processUtil.ShellRun("make configure", extractPath, cancellationToken);
+        await _processUtil.ShellRun($"{ReproEnv} make configure", extractPath, cancellationToken);
 
-        // 7) configure for musl static build
+        // 7) configure for musl static build with deterministic flags
         _logger.LogInformation("Configuring for musl static build…");
         try
         {
-            var configureArgs =
-                $"-lc \"export CC=musl-gcc; " +
-                "export CFLAGS='-O2 -static -I/usr/include'; " +
-                "export LDFLAGS='-static'; " +
-                "./configure " +
-                "--host=x86_64-linux-musl " +
-                "--prefix=/usr " +
-                "--with-curl " +
-                "--with-openssl " +
-                "--with-expat " +
-                "--with-perl=/usr/bin/perl " +
-                "--with-tcltk\"";
+            string ccFlags = $"-ffile-prefix-map={extractPath}=. -fdebug-prefix-map={extractPath}=.";
+            string cflags = "-O2 -static -I/usr/include";
+            string ldflags = "-static -Wl,--build-id=none";
 
-            await _processUtil.BashRun(
-                cmd: "bash",
-                args: configureArgs,
-                workingDir: extractPath,
-                cancellationToken
-            );
+            string configureCmd =
+                $"bash -lc \"CC='musl-gcc {ccFlags}' CFLAGS='{cflags}' LDFLAGS='{ldflags}' ./configure --host=x86_64-linux-musl --prefix=/usr --with-curl --with-openssl --with-expat --with-perl=/usr/bin/perl --with-tcltk\"";
+            await _processUtil.ShellRun($"{ReproEnv} {configureCmd}", extractPath, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -115,29 +89,22 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
             if (File.Exists(logPath))
             {
                 var lines = File.ReadLines(logPath).Take(20);
-                _logger.LogError(
-                    "`./configure` failed, first 20 lines of config.log:\n{log}",
-                    string.Join(Environment.NewLine, lines)
-                );
+                _logger.LogError("`./configure` failed, first 20 lines of config.log:\n{log}", string.Join(Environment.NewLine, lines));
             }
+
             throw;
         }
 
-        // 8) compile in parallel
+        // 8) compile
         _logger.LogInformation("Compiling Git…");
-        await _processUtil.ShellRun(
-            $"make -j{Environment.ProcessorCount}",
-            extractPath,
-            cancellationToken
-        );
+        await _processUtil.ShellRun($"{ReproEnv} make -C {extractPath} -j{Environment.ProcessorCount}", extractPath, cancellationToken);
 
         // 9) strip to reduce size
         _logger.LogInformation("Stripping binary…");
-        await _processUtil.ShellRun("strip git", extractPath, cancellationToken);
+        await _processUtil.ShellRun($"{ReproEnv} strip --strip-all git", extractPath, cancellationToken);
 
-        var binaryPath = Path.Combine(extractPath, "git");
+        string binaryPath = Path.Combine(extractPath, "git");
         _logger.LogInformation("Static Git binary built at {path}", binaryPath);
-
         return binaryPath;
     }
 
@@ -146,22 +113,18 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         HttpClient client = await _httpClientCache.Get(nameof(BuildLibraryUtil), cancellationToken: cancellationToken);
         client.DefaultRequestHeaders.UserAgent.ParseAdd("DotNetGitTool/1.0");
 
-        JsonElement[]? tags = await client.GetFromJsonAsync<JsonElement[]>(
-            "https://api.github.com/repos/git/git/tags",
-            cancellationToken
-        );
+        JsonElement[]? tags = await client.GetFromJsonAsync<JsonElement[]>("https://api.github.com/repos/git/git/tags", cancellationToken);
 
         foreach (var tag in tags!)
         {
             string name = tag.GetProperty("name").GetString()!;
-            if (!name.Contains("-rc", StringComparison.OrdinalIgnoreCase)
-                && !name.Contains("-beta", StringComparison.OrdinalIgnoreCase)
-                && !name.Contains("-alpha", StringComparison.OrdinalIgnoreCase))
+            if (!name.Contains("-rc", StringComparison.OrdinalIgnoreCase) && !name.Contains("-beta", StringComparison.OrdinalIgnoreCase) &&
+                !name.Contains("-alpha", StringComparison.OrdinalIgnoreCase))
             {
                 return name;
             }
         }
 
-        throw new Exception("No stable Git version found.");
+        throw new InvalidOperationException("No stable Git version found.");
     }
 }
