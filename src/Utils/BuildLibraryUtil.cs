@@ -62,7 +62,8 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
             "tk-dev " +
             "perl " +
             "libperl-dev " +
-            "libreadline-dev";
+            "libreadline-dev"+
+            "gettext";
 
         // single-quoted inside -lc so bash sees it all as one command
         await _processUtil.BashRun(
