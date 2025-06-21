@@ -52,12 +52,16 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
             "sudo apt-get install -y " +
             "build-essential " +
             "musl-tools " +
+            "pkg-config " +
             "libcurl4-openssl-dev " +
             "libssl-dev " +
             "libexpat1-dev " +
+            "zlib1g-dev " +
             "tcl-dev " +
             "tk-dev " +
-            "perl";
+            "perl " +
+            "libperl-dev " +
+            "libreadline-dev";
 
         // single-quoted inside -lc so bash sees it all as one command
         await _processUtil.BashRun(
