@@ -1,0 +1,87 @@
+﻿using Microsoft.Extensions.Logging;
+using Soenneker.Git.Runners.Linux.Utils.Abstract;
+using Soenneker.Git.Util.Abstract;
+using Soenneker.Utils.Directory.Abstract;
+using Soenneker.Utils.File.Download.Abstract;
+using Soenneker.Utils.HttpClientCache.Abstract;
+using Soenneker.Utils.Process.Abstract;
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Net.Http;
+using System.Net.Http.Json;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace Soenneker.Git.Runners.Linux.Utils;
+
+///<inheritdoc cref="IBuildLibraryUtil"/>
+public sealed class BuildLibraryUtil : IBuildLibraryUtil
+{
+    private readonly ILogger<BuildLibraryUtil> _logger;
+    private readonly IDirectoryUtil _directoryUtil;
+    private readonly IHttpClientCache _httpClientCache;
+    private readonly IFileDownloadUtil _fileDownloadUtil;
+    private readonly IProcessUtil _processUtil;
+
+    public BuildLibraryUtil(ILogger<BuildLibraryUtil> logger, IDirectoryUtil directoryUtil, IHttpClientCache httpClientCache,
+        IFileDownloadUtil fileDownloadUtil, IProcessUtil processUtil)
+    {
+        _logger = logger;
+        _directoryUtil = directoryUtil;
+        _httpClientCache = httpClientCache;
+        _fileDownloadUtil = fileDownloadUtil;
+        _processUtil = processUtil;
+    }
+
+    public async ValueTask<string> Build(CancellationToken cancellationToken)
+    {
+        string tempDir = _directoryUtil.CreateTempDirectory();
+
+        string latestVersion = await GetLatestStableGitTag(cancellationToken);
+        _logger.LogInformation("Latest stable Git version: {version}", latestVersion);
+
+        string archivePath = Path.Combine(tempDir, "git.tar.gz");
+        var downloadUrl = $"https://github.com/git/git/archive/refs/tags/{latestVersion}.tar.gz";
+
+        _logger.LogInformation("Downloading Git source from {url}", downloadUrl);
+        _ = await _fileDownloadUtil.Download(downloadUrl, archivePath, cancellationToken: cancellationToken);
+
+        await _processUtil.BashRun("tar", $"-xzf {archivePath}", tempDir, cancellationToken);
+
+        string versionTrimmed = latestVersion.TrimStart('v');
+        string extractPath = Path.Combine(tempDir, $"git-{versionTrimmed}");
+
+        await _processUtil.BashRun("make", "configure", extractPath, cancellationToken);
+        await _processUtil.BashRun("./configure", "--prefix=/usr --without-tcltk", extractPath, cancellationToken);
+
+        await _processUtil.BashRun("make", "LDFLAGS='-static' CFLAGS='-O2 -static' " + "NO_GETTEXT=YesPlease NO_PYTHON=YesPlease NO_TCLTK=YesPlease NO_INSTALL_HARDLINKS=1",
+            extractPath, cancellationToken);
+
+        await _processUtil.BashRun("strip", "git", extractPath, cancellationToken);
+
+        string binaryPath = Path.Combine(extractPath, "git");
+        _logger.LogInformation("Static Git binary built at {path}", binaryPath);
+
+        return binaryPath;
+    }
+
+    public async ValueTask<string> GetLatestStableGitTag(CancellationToken cancellationToken = default)
+    {
+        HttpClient client = await _httpClientCache.Get(nameof(BuildLibraryUtil), cancellationToken: cancellationToken);
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("DotNetGitTool/1.0");
+
+        JsonElement[]? tags = await client.GetFromJsonAsync<JsonElement[]>("https://api.github.com/repos/git/git/tags", cancellationToken);
+
+        foreach (JsonElement tag in tags)
+        {
+            string name = tag.GetProperty("name").GetString()!;
+            if (!name.Contains("-rc", StringComparison.OrdinalIgnoreCase) && !name.Contains("-beta", StringComparison.OrdinalIgnoreCase) &&
+                !name.Contains("-alpha", StringComparison.OrdinalIgnoreCase))
+                return name;
+        }
+
+        throw new Exception("No stable Git version found.");
+    }
+}
