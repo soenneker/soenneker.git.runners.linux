@@ -6,6 +6,7 @@ using Soenneker.Utils.HttpClientCache.Abstract;
 using Soenneker.Utils.Process.Abstract;
 using System;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -80,9 +81,31 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         await _processUtil.BashRun("make", "configure", extractPath, cancellationToken);
 
         // 2) configure for musl static everything
-        await _processUtil.BashRun("./configure",
-            @"--prefix=/usr --with-curl --with-openssl --with-expat --with-perl --with-tcltk CC=musl-gcc CFLAGS='-O2 -static' LDFLAGS='-static'", extractPath,
-            cancellationToken);
+        try
+        {
+            await _processUtil.BashRun(
+                "./configure",
+                "--prefix=/usr " +
+                "--with-curl --with-openssl --with-expat --with-perl=/usr/bin/perl --with-tcltk " +
+                "CC=musl-gcc " +
+                // tell it where to find zlib.h
+                "CFLAGS='-O2 -static -I/usr/include' " +
+                "LDFLAGS='-static'",
+                extractPath,
+                cancellationToken
+            );
+        }
+        catch (Exception ex)
+        {
+            var logPath = Path.Combine(extractPath, "config.log");
+            if (File.Exists(logPath))
+            {
+                var lines = File.ReadLines(logPath).Take(20);
+                _logger.LogError("`./configure` failed, first 20 lines of config.log:\n{log}",
+                    string.Join(Environment.NewLine, lines));
+            }
+            throw; // re-throw so upstream sees the failure
+        }
 
         // 3) compile in parallel
         await _processUtil.BashRun("make", $"-j{Environment.ProcessorCount}", extractPath, cancellationToken);
