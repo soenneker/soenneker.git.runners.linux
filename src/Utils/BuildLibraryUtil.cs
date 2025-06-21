@@ -84,13 +84,12 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         try
         {
             await _processUtil.BashRun(
-                "./configure",
+                "bash",
+                $"-lc \"./configure " +
+                "--host=x86_64-linux-musl " +
                 "--prefix=/usr " +
                 "--with-curl --with-openssl --with-expat --with-perl=/usr/bin/perl --with-tcltk " +
-                "CC=musl-gcc " +
-                // tell it where to find zlib.h
-                "CFLAGS='-O2 -static -I/usr/include' " +
-                "LDFLAGS='-static'",
+                "CC=musl-gcc CFLAGS='-O2 -static -I/usr/include' LDFLAGS='-static'\"",
                 extractPath,
                 cancellationToken
             );
