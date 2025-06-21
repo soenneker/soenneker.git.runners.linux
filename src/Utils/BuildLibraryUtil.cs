@@ -1,12 +1,10 @@
 ﻿using Microsoft.Extensions.Logging;
 using Soenneker.Git.Runners.Linux.Utils.Abstract;
-using Soenneker.Git.Util.Abstract;
 using Soenneker.Utils.Directory.Abstract;
 using Soenneker.Utils.File.Download.Abstract;
 using Soenneker.Utils.HttpClientCache.Abstract;
 using Soenneker.Utils.Process.Abstract;
 using System;
-using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Json;
@@ -53,12 +51,18 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         string versionTrimmed = latestVersion.TrimStart('v');
         string extractPath = Path.Combine(tempDir, $"git-{versionTrimmed}");
 
+        // 1) generate configure
         await _processUtil.BashRun("make", "configure", extractPath, cancellationToken);
-        await _processUtil.BashRun("./configure", "--prefix=/usr --without-tcltk", extractPath, cancellationToken);
 
-        await _processUtil.BashRun("make", "LDFLAGS='-static' CFLAGS='-O2 -static' " + "NO_GETTEXT=YesPlease NO_PYTHON=YesPlease NO_TCLTK=YesPlease NO_INSTALL_HARDLINKS=1",
-            extractPath, cancellationToken);
+        // 2) configure for musl static everything
+        await _processUtil.BashRun("./configure",
+            @"--prefix=/usr --with-curl --with-openssl --with-expat --with-perl --with-tcltk CC=musl-gcc CFLAGS='-O2 -static' LDFLAGS='-static'", extractPath,
+            cancellationToken);
 
+        // 3) compile in parallel
+        await _processUtil.BashRun("make", $"-j{Environment.ProcessorCount}", extractPath, cancellationToken);
+
+        // 4) strip to reduce size
         await _processUtil.BashRun("strip", "git", extractPath, cancellationToken);
 
         string binaryPath = Path.Combine(extractPath, "git");

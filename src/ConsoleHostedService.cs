@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Diagnostics;
-using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Hosting;
@@ -20,8 +19,8 @@ public sealed class ConsoleHostedService : IHostedService
 
     private int? _exitCode;
 
-    public ConsoleHostedService(ILogger<ConsoleHostedService> logger, IHostApplicationLifetime appLifetime,
-        IRunnersManager runnersManager, IBuildLibraryUtil buildLibraryUtil)
+    public ConsoleHostedService(ILogger<ConsoleHostedService> logger, IHostApplicationLifetime appLifetime, IRunnersManager runnersManager,
+        IBuildLibraryUtil buildLibraryUtil)
     {
         _logger = logger;
         _appLifetime = appLifetime;
@@ -41,7 +40,8 @@ public sealed class ConsoleHostedService : IHostedService
                 {
                     string filePath = await _buildLibraryUtil.Build(cancellationToken);
 
-                   // await _runnersManager.PushIfChangesNeeded(filePath, Constants.FileName, Constants.Library, $"https://github.com/soenneker/{Constants.Library}", cancellationToken);
+                    await _runnersManager.PushIfChangesNeeded(filePath, Constants.FileName, Constants.Library,
+                        $"https://github.com/soenneker/{Constants.Library}", cancellationToken);
 
                     _logger.LogInformation("Complete!");
 
