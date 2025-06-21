@@ -46,6 +46,10 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         _logger.LogInformation("Downloading Git source from {url}", downloadUrl);
         _ = await _fileDownloadUtil.Download(downloadUrl, archivePath, cancellationToken: cancellationToken);
 
+        _logger.LogInformation("Installing native build dependencies…");
+        await _processUtil.BashRun("apt-get", "update", tempDir, cancellationToken);
+        await _processUtil.BashRun("apt-get", "install -y build-essential musl-tools musl-dev libcurl4-openssl-dev libssl-dev libexpat1-dev tcl-dev tk-dev perl", tempDir, cancellationToken);
+
         await _processUtil.BashRun("tar", $"-xzf {archivePath}", tempDir, cancellationToken);
 
         string versionTrimmed = latestVersion.TrimStart('v');
