@@ -47,12 +47,22 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         _ = await _fileDownloadUtil.Download(downloadUrl, archivePath, cancellationToken: cancellationToken);
 
         _logger.LogInformation("Installing native build dependencies…");
-        // runs under /bin/bash -c, so we can chain update+install with sudo
+        var installScript =
+            "sudo apt-get update && " +
+            "sudo apt-get install -y " +
+            "build-essential " +
+            "musl-tools " +
+            "libcurl4-openssl-dev " +
+            "libssl-dev " +
+            "libexpat1-dev " +
+            "tcl-dev " +
+            "tk-dev " +
+            "perl";
+
+        // single-quoted inside -lc so bash sees it all as one command
         await _processUtil.BashRun(
             "bash",
-            "-lc \"sudo apt-get update && sudo apt-get install -y " +
-            "build-essential musl-tools libcurl4-openssl-dev " +
-            "libssl-dev libexpat1-dev tcl-dev tk-dev perl\"",
+            $"-lc '{installScript}'",
             tempDir,
             cancellationToken
         );
