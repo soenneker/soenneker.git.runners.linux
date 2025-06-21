@@ -89,13 +89,25 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         _logger.LogInformation("Configuring for musl static build…");
         try
         {
-            var configureCmd =
-                "./configure "
-                + "--host=x86_64-linux-musl "
-                + "--prefix=/usr "
-                + "--with-curl --with-openssl --with-expat --with-perl=/usr/bin/perl --with-tcltk "
-                + "CC=musl-gcc CFLAGS='-O2 -static -I/usr/include' LDFLAGS='-static'";
-            await _processUtil.ShellRun(configureCmd, extractPath, cancellationToken);
+            var configureArgs =
+                $"-lc \"export CC=musl-gcc; " +
+                "export CFLAGS='-O2 -static -I/usr/include'; " +
+                "export LDFLAGS='-static'; " +
+                "./configure " +
+                "--host=x86_64-linux-musl " +
+                "--prefix=/usr " +
+                "--with-curl " +
+                "--with-openssl " +
+                "--with-expat " +
+                "--with-perl=/usr/bin/perl " +
+                "--with-tcltk\"";
+
+            await _processUtil.BashRun(
+                cmd: "bash",
+                args: configureArgs,
+                workingDir: extractPath,
+                cancellationToken
+            );
         }
         catch (Exception ex)
         {
