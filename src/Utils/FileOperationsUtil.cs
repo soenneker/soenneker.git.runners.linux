@@ -12,6 +12,7 @@ using Soenneker.Utils.Environment;
 using Soenneker.Utils.File.Abstract;
 using Soenneker.Utils.FileSync.Abstract;
 using Soenneker.Utils.SHA3.Abstract;
+using Soenneker.Extensions.ValueTask;
 
 namespace Soenneker.Git.Runners.Linux.Utils;
 
@@ -44,7 +45,7 @@ public sealed class FileOperationsUtil : IFileOperationsUtil
 
     public async ValueTask Process(string filePath, CancellationToken cancellationToken = default)
     {
-        string gitDirectory = _gitUtil.CloneToTempDirectory($"https://github.com/soenneker/{Constants.Library.ToLowerInvariantFast()}");
+        string gitDirectory = await _gitUtil.CloneToTempDirectory($"https://github.com/soenneker/{Constants.Library.ToLowerInvariantFast()}", cancellationToken).NoSync();
 
         string targetExePath = Path.Combine(gitDirectory, "src", "Resources", Constants.FileName);
 
@@ -133,7 +134,7 @@ public sealed class FileOperationsUtil : IFileOperationsUtil
 
             _gitUtil.Commit(gitDirectory, "Updates hash for new version", name, email);
 
-            await _gitUtil.Push(gitDirectory, username, token, cancellationToken);
+            await _gitUtil.Push(gitDirectory, token, cancellationToken);
         }
         else
         {
