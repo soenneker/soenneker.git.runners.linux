@@ -82,8 +82,7 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
 
         // 7) configure for musl static build
         _logger.LogInformation("Configuring for musl static build using system toolchain…");
-        try
-        {
+
             // Define all the toolchain utilities
             string envVars = $"CC=musl-gcc " +
                              $"STRIP=x86_64-linux-musl-strip " + // <-- Tell configure about strip
@@ -94,7 +93,7 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
 
             string fullConfigureSnippet = $"{ReproEnv} {envVars} {configureCmd}";
             await _processUtil.BashRun(fullConfigureSnippet, "", extractPath, cancellationToken);
-        }
+        
         // ... catch block ...
 
         // Compile step remains the same
