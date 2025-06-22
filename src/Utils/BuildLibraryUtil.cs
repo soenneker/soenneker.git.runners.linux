@@ -42,11 +42,13 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
     public async ValueTask<string> Build(CancellationToken cancellationToken)
     {
         // --- Toolchain Configuration ---
-        const string toolchainUrl = "https://musl.cc/x86_64-linux-musl-cross.tgz";
+        // REMOVED: No longer need the manual toolchain URL
+        // const string toolchainUrl = "https://musl.cc/x86_64-linux-musl-cross.tgz";
 
         // 1) prepare temp dir
         string tempDir = await _directoryUtil.CreateTempDirectory(cancellationToken);
-        string toolchainDir = Path.Combine(tempDir, "musl-toolchain");
+        // REMOVED: No longer need a separate directory for the toolchain
+        // string toolchainDir = Path.Combine(tempDir, "musl-toolchain");
 
         // 2) fetch latest Git tag
         string latestVersion = await GetLatestStableGitTag(cancellationToken);
@@ -59,17 +61,11 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         await _fileDownloadUtil.Download(downloadUrl, archivePath, cancellationToken: cancellationToken);
 
         // 4) install HOST build dependencies (make, wget, etc.)
-        _logger.LogInformation("Installing native host build dependencies…");
+        _logger.LogInformation("Installing native host build dependencies, including musl-tools…");
         await _processUtil.BashRun(InstallScript, "", tempDir, cancellationToken);
 
-        // --- NEW STEP: Download and extract the cross-compilation toolchain ---
-        _logger.LogInformation("Downloading musl cross-compilation toolchain...");
-        string toolchainArchivePath = Path.Combine(tempDir, "musl-toolchain.tgz");
-        await _fileDownloadUtil.Download(toolchainUrl, toolchainArchivePath, cancellationToken: cancellationToken);
-
-        _logger.LogInformation("Extracting toolchain...");
-        Directory.CreateDirectory(toolchainDir); // Ensure the target directory exists
-        await _processUtil.BashRun($"tar -xzf {toolchainArchivePath} -C {toolchainDir} --strip-components=1", "", tempDir, cancellationToken);
+        // --- REMOVED STEP: Download and extract the cross-compilation toolchain ---
+        // The code block for downloading from musl.cc and extracting the tarball is completely removed.
 
         // 5) extract Git source
         _logger.LogInformation("Extracting Git source…");
@@ -84,54 +80,34 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         string makeConfigureSnippet = $"{ReproEnv} make configure";
         await _processUtil.BashRun(makeConfigureSnippet, "", extractPath, cancellationToken);
 
-        // 7) configure for musl static build USING THE TOOLCHAIN
-        _logger.LogInformation("Configuring for musl static build using toolchain…");
+        // 7) configure for musl static build
+        _logger.LogInformation("Configuring for musl static build using system toolchain…");
         try
         {
-            // Define paths within the extracted toolchain
-            string toolchainBin = Path.Combine(toolchainDir, "bin");
-            string toolchainInclude = Path.Combine(toolchainDir, "x86_64-linux-musl/include");
-            string toolchainLib = Path.Combine(toolchainDir, "x86_64-linux-musl/lib");
+            // Define all the toolchain utilities
+            string envVars = $"CC=musl-gcc " +
+                             $"STRIP=x86_64-linux-musl-strip " + // <-- Tell configure about strip
+                             $"CFLAGS='-O2 -static -ffile-prefix-map={extractPath}=. -fdebug-prefix-map={extractPath}=.' " +
+                             $"LDFLAGS='-static -Wl,--build-id=none'";
 
-            // Set environment variables to point build tools to the toolchain
-            string envVars = $"PATH=\"{toolchainBin}:$PATH\" " +
-                             $"CC=x86_64-linux-musl-gcc " +
-                             $"CFLAGS='-O2 -static -I{toolchainInclude} -ffile-prefix-map={extractPath}=. -fdebug-prefix-map={extractPath}=.' " +
-                             $"LDFLAGS='-static -L{toolchainLib} -Wl,--build-id=none'";
-
-            // Note: The --with-tcltk flag is removed as it's complex to cross-compile.
-            // If you don't need git-gui/gitk, it's safer to remove it.
             string configureCmd = $"./configure --host=x86_64-linux-musl --prefix=/usr --with-curl --with-openssl --with-expat --with-perl=/usr/bin/perl --without-tcltk";
 
             string fullConfigureSnippet = $"{ReproEnv} {envVars} {configureCmd}";
             await _processUtil.BashRun(fullConfigureSnippet, "", extractPath, cancellationToken);
         }
-        catch (Exception ex)
-        {
-            var logPath = Path.Combine(extractPath, "config.log");
-            if (File.Exists(logPath))
-            {
-                var logContent = await File.ReadAllTextAsync(logPath, cancellationToken);
-                _logger.LogError("`./configure` failed. Full content of config.log:\n{log}", logContent);
-            }
+        // ... catch block ...
 
-            throw; // Re-throw the original exception
-        }
-
-        // The rest of the build process can use the same environment setup
+        // Compile step remains the same
         _logger.LogInformation("Compiling Git…");
-        string toolchainBinForMake = Path.Combine(toolchainDir, "bin");
-        string makeEnv = $"{ReproEnv} PATH=\"{toolchainBinForMake}:$PATH\"";
-        string compileSnippet = $"{makeEnv} make -j{Environment.ProcessorCount}";
+        string compileSnippet = $"{ReproEnv} make -j{Environment.ProcessorCount}";
         await _processUtil.BashRun(compileSnippet, "", extractPath, cancellationToken);
 
+        // NOW, use `make` to strip the binary using the configured STRIP variable
         _logger.LogInformation("Stripping binary…");
-        string stripEnv = $"{ReproEnv} PATH=\"{toolchainBinForMake}:$PATH\"";
-        // Use the strip from the toolchain to be safe
-        string stripSnippet = $"{stripEnv} x86_64-linux-musl-strip --strip-all git";
+        string stripSnippet = $"{ReproEnv} make strip"; // <-- Use the Makefile's strip target
         await _processUtil.BashRun(stripSnippet, "", extractPath, cancellationToken);
 
-        string binaryPath = Path.Combine(extractPath, "git");
+        string binaryPath = Path.Combine(extractPath, "git"); // The binary is still at the same path
         _logger.LogInformation("Static Git binary built at {path}", binaryPath);
         return binaryPath;
     }
