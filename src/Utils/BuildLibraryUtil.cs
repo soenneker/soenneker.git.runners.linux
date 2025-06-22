@@ -56,12 +56,12 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
 
         // 4) install native build dependencies
         _logger.LogInformation("Installing native build dependencies…");
-        await _processUtil.ShellRun(InstallScript, tempDir, cancellationToken);
+        await _processUtil.BashRun(InstallScript, "", tempDir, cancellationToken);
 
         // 5) extract with fixed timestamps, ownership, order
         _logger.LogInformation("Extracting Git source…");
-        await _processUtil.ShellRun($"{ReproEnv} tar --sort=name --mtime=@1620000000 --owner=0 --group=0 --numeric-owner -xzf {archivePath}", tempDir,
-            cancellationToken);
+        string tarSnippet = $"{ReproEnv} tar --sort=name --mtime=@1620000000 --owner=0 --group=0 --numeric-owner -xzf {archivePath}";
+        await _processUtil.BashRun(tarSnippet, "", tempDir, cancellationToken);
 
         // derive extract path
         string versionTrimmed = latestVersion.TrimStart('v');
@@ -69,7 +69,8 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
 
         // 6) generate configure script
         _logger.LogInformation("Generating configure script…");
-        await _processUtil.ShellRun($"{ReproEnv} make configure", extractPath, cancellationToken);
+        string makeConfigureSnippet = $"{ReproEnv} make configure";
+        await _processUtil.BashRun(makeConfigureSnippet, "", extractPath, cancellationToken);
 
         // 7) configure for musl static build with deterministic flags
         _logger.LogInformation("Configuring for musl static build…");
@@ -79,9 +80,11 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
             string cflags = "-O2 -static -I/usr/include";
             string ldflags = "-static -Wl,--build-id=none";
 
-            string configureCmd =
-                $"bash -lc \"CC='musl-gcc {ccFlags}' CFLAGS='{cflags}' LDFLAGS='{ldflags}' ./configure --host=x86_64-linux-musl --prefix=/usr --with-curl --with-openssl --with-expat --with-perl=/usr/bin/perl --with-tcltk\"";
-            await _processUtil.ShellRun($"{ReproEnv} {configureCmd}", extractPath, cancellationToken);
+            // IMPORTANT: The "bash -lc" wrapper is REMOVED from this snippet because your BashRun method adds it automatically.
+            string configureCmd = $"CC='musl-gcc {ccFlags}' CFLAGS='{cflags}' LDFLAGS='{ldflags}' ./configure --host=x86_64-linux-musl --prefix=/usr --with-curl --with-openssl --with-expat --with-perl=/usr/bin/perl --with-tcltk";
+
+            string fullConfigureSnippet = $"{ReproEnv} {configureCmd}";
+            await _processUtil.BashRun(fullConfigureSnippet, "", extractPath, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -97,11 +100,14 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
 
         // 8) compile
         _logger.LogInformation("Compiling Git…");
-        await _processUtil.ShellRun($"{ReproEnv} make -C {extractPath} -j{Environment.ProcessorCount}", extractPath, cancellationToken);
+        // Note: The '-C {extractPath}' is removed from make, as the working directory is already set by BashRun.
+        string compileSnippet = $"{ReproEnv} make -j{Environment.ProcessorCount}";
+        await _processUtil.BashRun(compileSnippet, "", extractPath, cancellationToken);
 
         // 9) strip to reduce size
         _logger.LogInformation("Stripping binary…");
-        await _processUtil.ShellRun($"{ReproEnv} strip --strip-all git", extractPath, cancellationToken);
+        string stripSnippet = $"{ReproEnv} strip --strip-all git";
+        await _processUtil.BashRun(stripSnippet, "", extractPath, cancellationToken);
 
         string binaryPath = Path.Combine(extractPath, "git");
         _logger.LogInformation("Static Git binary built at {path}", binaryPath);
