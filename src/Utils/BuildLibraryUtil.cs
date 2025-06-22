@@ -45,7 +45,7 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         const string toolchainUrl = "https://musl.cc/x86_64-linux-musl-cross.tgz";
 
         // 1) prepare temp dir
-        string tempDir = _directoryUtil.CreateTempDirectory();
+        string tempDir = await _directoryUtil.CreateTempDirectory(cancellationToken);
         string toolchainDir = Path.Combine(tempDir, "musl-toolchain");
 
         // 2) fetch latest Git tag
@@ -68,7 +68,7 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         await _fileDownloadUtil.Download(toolchainUrl, toolchainArchivePath, cancellationToken: cancellationToken);
 
         _logger.LogInformation("Extracting toolchain...");
-        _directoryUtil.Create(toolchainDir); // Ensure the target directory exists
+        Directory.CreateDirectory(toolchainDir); // Ensure the target directory exists
         await _processUtil.BashRun($"tar -xzf {toolchainArchivePath} -C {toolchainDir} --strip-components=1", "", tempDir, cancellationToken);
 
         // 5) extract Git source
