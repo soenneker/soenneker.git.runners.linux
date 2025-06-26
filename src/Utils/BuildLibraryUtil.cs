@@ -1,12 +1,13 @@
 ﻿using Microsoft.Extensions.Logging;
+using Soenneker.Extensions.ValueTask;
 using Soenneker.Git.Runners.Linux.Utils.Abstract;
 using Soenneker.Utils.Directory.Abstract;
+using Soenneker.Utils.File.Abstract;
 using Soenneker.Utils.File.Download.Abstract;
 using Soenneker.Utils.HttpClientCache.Abstract;
 using Soenneker.Utils.Process.Abstract;
 using System;
 using System.IO;
-using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -29,20 +30,22 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
     private readonly IHttpClientCache _httpClientCache;
     private readonly IFileDownloadUtil _fileDownloadUtil;
     private readonly IProcessUtil _processUtil;
+    private readonly IFileUtil _fileUtil;
 
     public BuildLibraryUtil(ILogger<BuildLibraryUtil> logger, IDirectoryUtil directoryUtil, IHttpClientCache httpClientCache,
-        IFileDownloadUtil fileDownloadUtil, IProcessUtil processUtil)
+        IFileDownloadUtil fileDownloadUtil, IProcessUtil processUtil, IFileUtil fileUtil)
     {
         _logger = logger;
         _directoryUtil = directoryUtil;
         _httpClientCache = httpClientCache;
         _fileDownloadUtil = fileDownloadUtil;
         _processUtil = processUtil;
+        _fileUtil = fileUtil;
     }
 
     public async ValueTask<string> Build(CancellationToken cancellationToken)
     {
-        string tempDir = await _directoryUtil.CreateTempDirectory(cancellationToken);
+        string tempDir = await _directoryUtil.CreateTempDirectory(cancellationToken).NoSync();
 
         string latestVersion = await GetLatestStableGitTag(cancellationToken);
         _logger.LogInformation("Latest stable Git version: {version}", latestVersion);
@@ -56,42 +59,55 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         await _processUtil.BashRun(InstallScript, "", tempDir, cancellationToken);
 
         _logger.LogInformation("Extracting Git source…");
-        string tarSnippet = $"{ReproEnv} tar --sort=name --mtime=@1620000000 --owner=0 --group=0 --numeric-owner -xzf {archivePath}";
+        var tarSnippet = $"{ReproEnv} tar --sort=name --mtime=@1620000000 --owner=0 --group=0 --numeric-owner -xzf {archivePath}";
         await _processUtil.BashRun(tarSnippet, "", tempDir, cancellationToken);
 
         string versionTrimmed = latestVersion.TrimStart('v');
         string extractPath = Path.Combine(tempDir, $"git-{versionTrimmed}");
 
         _logger.LogInformation("Generating configure script…");
-        string makeConfigureSnippet = $"{ReproEnv} make configure";
+        var makeConfigureSnippet = $"{ReproEnv} make configure";
         await _processUtil.BashRun(makeConfigureSnippet, "", extractPath, cancellationToken);
 
-        // --- (FIX 2) Change entire configure strategy to use system GCC ---
-        _logger.LogInformation("Configuring for static build using system GCC...");
+        // Set up a clean prefix path for install
+        string installDir = Path.Combine(tempDir, "git-standalone");
 
-        // Use the system's GCC and tell it to link statically.
-        // We no longer need musl, --host, or explicit -I/-L paths as GCC knows the defaults.
-        string envVars = $"CC=gcc " +
-                         $"CFLAGS='-O2 -static' " +
-                         $"LDFLAGS='-static -Wl,--build-id=none'";
-
-        // The configure command is now much simpler.
-        string configureCmd = $"./configure --prefix=/usr --with-curl --with-openssl --with-expat --with-perl=/usr/bin/perl --without-tcltk";
-
-        string fullConfigureSnippet = $"{ReproEnv} {envVars} {configureCmd}";
-        await _processUtil.BashRun(fullConfigureSnippet, "", extractPath, cancellationToken);
+        _logger.LogInformation("Configuring for relocatable build...");
+        var configureCmd = $"./configure --prefix={installDir} --with-curl --with-openssl --with-expat --with-perl=/usr/bin/perl --without-tcltk";
+        await _processUtil.BashRun($"{ReproEnv} {configureCmd}", "", extractPath, cancellationToken);
 
         _logger.LogInformation("Compiling Git…");
-        string compileSnippet = $"{ReproEnv} make -j{Environment.ProcessorCount}";
+        var compileSnippet = $"{ReproEnv} make -j{Environment.ProcessorCount}";
         await _processUtil.BashRun(compileSnippet, "", extractPath, cancellationToken);
 
-        _logger.LogInformation("Stripping binary…");
-        string stripSnippet = $"{ReproEnv} make strip";
-        await _processUtil.BashRun(stripSnippet, "", extractPath, cancellationToken);
+        _logger.LogInformation("Installing Git to relocatable directory...");
+        var installSnippet = $"{ReproEnv} make install";
+        await _processUtil.BashRun(installSnippet, "", extractPath, cancellationToken);
 
-        string binaryPath = Path.Combine(extractPath, "git");
-        _logger.LogInformation("Static Git binary built at {path}", binaryPath);
-        return binaryPath;
+        // Copy shared libraries into /lib
+        string gitBinPath = Path.Combine(installDir, "bin", "git");
+        string libDir = Path.Combine(installDir, "lib");
+
+        _directoryUtil.CreateIfDoesNotExist(libDir);
+
+        _logger.LogInformation("Copying shared library dependencies into {libDir}", libDir);
+
+        var lddCmd = $"ldd {gitBinPath} | grep '=>' | awk '{{print $3}}' | xargs -I '{{}}' cp -u '{{}}' \"{libDir}\"";
+        await _processUtil.BashRun(lddCmd, "", tempDir, cancellationToken);
+
+        // Create a wrapper script for standalone execution
+        string scriptPath = Path.Combine(installDir, "git.sh");
+        var scriptContents =
+    $@"#!/bin/bash
+DIR=$(dirname ""$(readlink -f ""$0"")"")
+export LD_LIBRARY_PATH=""$DIR/lib:$LD_LIBRARY_PATH""
+exec ""$DIR/bin/git"" ""$@""";
+
+        await File.WriteAllTextAsync(scriptPath, scriptContents, cancellationToken);
+        await _processUtil.BashRun($"chmod +x {scriptPath}", "", tempDir, cancellationToken);
+
+        _logger.LogInformation("Standalone Git folder built at {path}", installDir);
+        return installDir;
     }
 
     public async ValueTask<string> GetLatestStableGitTag(CancellationToken cancellationToken = default)

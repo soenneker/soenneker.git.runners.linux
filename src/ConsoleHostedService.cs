@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Diagnostics;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Hosting;
@@ -38,9 +39,9 @@ public sealed class ConsoleHostedService : IHostedService
 
                 try
                 {
-                    string filePath = await _buildLibraryUtil.Build(cancellationToken);
+                    string installdirectory = await _buildLibraryUtil.Build(cancellationToken);
 
-                    await _runnersManager.PushIfChangesNeeded(filePath, Constants.FileName, Constants.Library,
+                    await _runnersManager.PushIfChangesNeededForDirectory(Path.Combine("linux-x64", "git"), installdirectory, Constants.Library,
                         $"https://github.com/soenneker/{Constants.Library}", cancellationToken);
 
                     _logger.LogInformation("Complete!");
