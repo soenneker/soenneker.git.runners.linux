@@ -21,9 +21,8 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
 {
     private const string ReproEnv = "SOURCE_DATE_EPOCH=1620000000 TZ=UTC LC_ALL=C";
 
-    // --- (FIX 1) Remove musl-tools from the install script ---
     private const string InstallScript = "sudo apt-get update && " +
-                                         "sudo apt-get install -y build-essential pkg-config libcurl4-openssl-dev libssl-dev libexpat1-dev zlib1g-dev tcl-dev tk-dev perl libperl-dev libreadline-dev gettext";
+                                         "sudo apt-get install -y build-essential pkg-config libcurl4-openssl-dev libssl-dev libexpat1-dev zlib1g-dev gettext";
 
     private readonly ILogger<BuildLibraryUtil> _logger;
     private readonly IDirectoryUtil _directoryUtil;
@@ -69,36 +68,39 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         var makeConfigureSnippet = $"{ReproEnv} make configure";
         await _processUtil.BashRun(makeConfigureSnippet, "", extractPath, cancellationToken);
 
-        // Set up a clean prefix path for install
         string installDir = Path.Combine(tempDir, "git-standalone");
 
-        _logger.LogInformation("Configuring for relocatable build...");
-        var configureCmd = $"./configure --prefix={installDir} --with-curl --with-openssl --with-expat --with-perl=/usr/bin/perl --without-tcltk";
+        _logger.LogInformation("Configuring for slim relocatable build...");
+        var configureCmd = $"./configure --prefix={installDir} --with-curl --with-openssl --with-expat --without-perl --without-readline --without-tcltk";
         await _processUtil.BashRun($"{ReproEnv} {configureCmd}", "", extractPath, cancellationToken);
 
         _logger.LogInformation("Compiling Git…");
         var compileSnippet = $"{ReproEnv} make -j{Environment.ProcessorCount}";
         await _processUtil.BashRun(compileSnippet, "", extractPath, cancellationToken);
 
-        _logger.LogInformation("Installing Git to relocatable directory...");
-        var installSnippet = $"{ReproEnv} make install";
+        _logger.LogInformation("Installing Git with stripping to minimize size...");
+        var installSnippet = $"{ReproEnv} make install-strip";
         await _processUtil.BashRun(installSnippet, "", extractPath, cancellationToken);
 
-        // Copy shared libraries into /lib
         string gitBinPath = Path.Combine(installDir, "bin", "git");
         string libDir = Path.Combine(installDir, "lib");
 
         _directoryUtil.CreateIfDoesNotExist(libDir);
 
         _logger.LogInformation("Copying shared library dependencies into {libDir}", libDir);
-
         var lddCmd = $"ldd {gitBinPath} | grep '=>' | awk '{{print $3}}' | xargs -I '{{}}' cp -u '{{}}' \"{libDir}\"";
         await _processUtil.BashRun(lddCmd, "", tempDir, cancellationToken);
 
-        // Create a wrapper script for standalone execution
+        _logger.LogInformation("Stripping Git binary and libraries...");
+        await _processUtil.BashRun("strip bin/git", "", installDir, cancellationToken);
+        await _processUtil.BashRun("strip lib/*", "", installDir, cancellationToken);
+
+        _logger.LogInformation("Removing unnecessary share and libexec directories...");
+        await _processUtil.BashRun("rm -rf share libexec", "", installDir, cancellationToken);
+
         string scriptPath = Path.Combine(installDir, "git.sh");
         var scriptContents =
-    $@"#!/bin/bash
+            $@"#!/bin/bash
 DIR=$(dirname ""$(readlink -f ""$0"")"")
 export LD_LIBRARY_PATH=""$DIR/lib:$LD_LIBRARY_PATH""
 exec ""$DIR/bin/git"" ""$@""";
