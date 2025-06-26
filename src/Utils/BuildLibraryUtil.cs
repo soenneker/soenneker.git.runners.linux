@@ -58,6 +58,12 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
 
         // --- STEP 2: Extract and Build ---
         _logger.LogInformation("Installing native host build dependencies...");
+        //
+        // Correction 1: Ensure Perl is included in your InstallScript for the build to succeed.
+        // Your `InstallScript` variable (which is not shown here) must contain a command like:
+        // "apt-get update && apt-get install -y build-essential libssl-dev libcurl4-openssl-dev libexpat1-dev gettext zlib1g-dev autoconf perl"
+        // The key is adding `perl` to the list of packages.
+        //
         await _processUtil.BashRun(InstallScript, "", tempDir, cancellationToken);
 
         _logger.LogInformation("Extracting Git source…");
@@ -77,18 +83,19 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         var configureCmd = $"./configure --prefix={installDir} --with-curl --with-openssl --with-expat --without-readline --without-tcltk";
         await _processUtil.BashRun($"{ReproEnv} {configureCmd}", "", extractPath, cancellationToken);
 
-        _logger.LogInformation("Compiling Git…");
-        var compileSnippet = $"{ReproEnv} make -j{Environment.ProcessorCount}";
+        // Correction 2: Use NO_PERL=1 to prevent Perl-based commands and libraries from being installed.
+        // This reduces the final package size and removes the runtime dependency.
+        _logger.LogInformation("Compiling Git without Perl dependencies…");
+        var compileSnippet = $"{ReproEnv} NO_PERL=1 make -j{Environment.ProcessorCount}";
         await _processUtil.BashRun(compileSnippet, "", extractPath, cancellationToken);
 
-        // --- STEP 3: Install ---
-        // Correction 1: Changed "make install-strip" to "make install".
-        // The "install-strip" target doesn't exist in Git's Makefile.
         _logger.LogInformation("Installing Git...");
-        var installSnippet = $"{ReproEnv} make install";
+        var installSnippet = $"{ReproEnv} NO_PERL=1 make install";
         await _processUtil.BashRun(installSnippet, "", extractPath, cancellationToken);
 
-        // --- STEP 4: Create Standalone Package ---
+        // --- STEP 4: Create Standalone Package (Stripping, etc.) ---
+        // (The rest of the code remains the same as the previous correct version)
+
         string gitBinPath = Path.Combine(installDir, "bin", "git");
         string libDir = Path.Combine(installDir, "lib");
         string libexecDir = Path.Combine(installDir, "libexec", "git-core");
@@ -96,50 +103,30 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         _directoryUtil.CreateIfDoesNotExist(libDir);
 
         _logger.LogInformation("Copying shared library dependencies into {libDir}", libDir);
-        // Added -L to `cp` to copy the actual library file, not the symlink, which is crucial for a standalone package.
         var lddCmd = $"ldd {gitBinPath} | grep '=>' | awk '{{print $3}}' | xargs -I '{{}}' cp -L -u '{{}}' \"{libDir}\"";
         await _processUtil.BashRun(lddCmd, "", tempDir, cancellationToken);
 
-        // --- STEP 5: Strip Binaries for Size Reduction ---
         _logger.LogInformation("Stripping Git binary, helpers, and shared libraries...");
-
-        // First, strip the main git binary
         await _processUtil.BashRun($"strip {gitBinPath}", "", installDir, cancellationToken);
 
-        // Correction 2: Use a robust command to strip only binary files, ignoring scripts and directories.
-        // The old `strip .../*` command would fail on non-binary files.
-        // Note the double curly braces {{}} to escape them for the C# string.
         var stripExecutablesCmd = $"find . -type f -exec file {{}} + | grep 'ELF executable' | cut -d: -f1 | xargs --no-run-if-empty strip";
 
-        // Strip helper executables in libexec/git-core
         if (Directory.Exists(libexecDir))
         {
             _logger.LogInformation("Stripping helper executables in {libexecDir}...", libexecDir);
             await _processUtil.BashRun(stripExecutablesCmd, "", libexecDir, cancellationToken);
         }
 
-        // Strip the copied shared libraries in lib
         if (Directory.Exists(libDir) && Directory.GetFiles(libDir).Any())
         {
             _logger.LogInformation("Stripping shared libraries in {libDir}...", libDir);
             await _processUtil.BashRun(stripExecutablesCmd, "", libDir, cancellationToken);
         }
 
-        // --- STEP 6: Remove Unnecessary Files ---
         _logger.LogInformation("Removing unnecessary directories to minimize size...");
-        // Correction 3: Be specific about what to remove.
-        // DO NOT remove 'libexec' (critical for git commands).
-        // DO NOT remove all of 'share' (breaks `git init`).
-        // Instead, remove only the non-essential parts of 'share'.
         var unnecessaryShareItems = new[]
         {
-        "doc",          // Documentation and man pages
-        "git-gui",      // Files for the git-gui client
-        "gitk-git",     // Files for the gitk client
-        "locale",       // Language translation files
-        "gitweb",       // Web interface for git
-        "perl5",        // Perl modules
-        "bash-completion" // Bash tab-completion scripts
+        "doc", "git-gui", "gitk-git", "locale", "gitweb", "perl5", "bash-completion"
     };
 
         foreach (var item in unnecessaryShareItems)
@@ -151,7 +138,6 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
             }
         }
 
-        // --- STEP 7: Create Wrapper Script ---
         string scriptPath = Path.Combine(installDir, "git.sh");
         var scriptContents =
             $@"#!/bin/bash
