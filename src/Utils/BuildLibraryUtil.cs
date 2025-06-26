@@ -8,6 +8,7 @@ using Soenneker.Utils.HttpClientCache.Abstract;
 using Soenneker.Utils.Process.Abstract;
 using System;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -78,25 +79,43 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         var compileSnippet = $"{ReproEnv} make -j{Environment.ProcessorCount}";
         await _processUtil.BashRun(compileSnippet, "", extractPath, cancellationToken);
 
-        _logger.LogInformation("Installing Git with stripping to minimize size...");
-        var installSnippet = $"{ReproEnv} make install-strip";
+        // **********************************
+        // ******** CORRECTED SECTION *******
+        // **********************************
+        _logger.LogInformation("Installing Git...");
+        // 1. Changed "install-strip" to "install"
+        var installSnippet = $"{ReproEnv} make install";
         await _processUtil.BashRun(installSnippet, "", extractPath, cancellationToken);
 
         string gitBinPath = Path.Combine(installDir, "bin", "git");
         string libDir = Path.Combine(installDir, "lib");
+        string libexecDir = Path.Combine(installDir, "libexec", "git-core"); // Path to helper executables
 
         _directoryUtil.CreateIfDoesNotExist(libDir);
 
         _logger.LogInformation("Copying shared library dependencies into {libDir}", libDir);
-        var lddCmd = $"ldd {gitBinPath} | grep '=>' | awk '{{print $3}}' | xargs -I '{{}}' cp -u '{{}}' \"{libDir}\"";
+        var lddCmd = $"ldd {gitBinPath} | grep '=>' | awk '{{print $3}}' | xargs -I '{{}}' cp -L -u '{{}}' \"{libDir}\""; // Added -L to copy actual files, not symlinks
         await _processUtil.BashRun(lddCmd, "", tempDir, cancellationToken);
 
-        _logger.LogInformation("Stripping Git binary and libraries...");
-        await _processUtil.BashRun("strip bin/git", "", installDir, cancellationToken);
-        await _processUtil.BashRun("strip lib/*", "", installDir, cancellationToken);
+        _logger.LogInformation("Stripping Git binary, helpers, and libraries...");
+        await _processUtil.BashRun($"strip {gitBinPath}", "", installDir, cancellationToken);
 
-        _logger.LogInformation("Removing unnecessary share and libexec directories...");
-        await _processUtil.BashRun("rm -rf share libexec", "", installDir, cancellationToken);
+        // 2. Strip the crucial helper executables
+        if (Directory.Exists(libexecDir))
+        {
+            _logger.LogInformation("Stripping helper executables in {libexecDir}...", libexecDir);
+            await _processUtil.BashRun($"strip {libexecDir}/*", "", installDir, cancellationToken);
+        }
+
+        // 3. Strip the copied shared libraries
+        if (Directory.Exists(libDir) && Directory.GetFiles(libDir).Any())
+        {
+            await _processUtil.BashRun("strip lib/*", "", installDir, cancellationToken);
+        }
+
+        _logger.LogInformation("Removing unnecessary share directory...");
+        // 4. Do NOT remove libexec. It is required. Remove 'share' if you don't need man pages/docs.
+        await _processUtil.BashRun("rm -rf share", "", installDir, cancellationToken);
 
         string scriptPath = Path.Combine(installDir, "git.sh");
         var scriptContents =
