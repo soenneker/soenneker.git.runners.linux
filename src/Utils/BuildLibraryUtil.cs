@@ -45,6 +45,7 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
 
     public async ValueTask<string> Build(CancellationToken cancellationToken)
     {
+        // --- STEP 1: Setup and Download ---
         string tempDir = await _directoryUtil.CreateTempDirectory(cancellationToken).NoSync();
 
         string latestVersion = await GetLatestStableGitTag(cancellationToken);
@@ -55,6 +56,7 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         _logger.LogInformation("Downloading Git source from {url}", downloadUrl);
         await _fileDownloadUtil.Download(downloadUrl, archivePath, cancellationToken: cancellationToken);
 
+        // --- STEP 2: Extract and Build ---
         _logger.LogInformation("Installing native host build dependencies...");
         await _processUtil.BashRun(InstallScript, "", tempDir, cancellationToken);
 
@@ -79,44 +81,77 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         var compileSnippet = $"{ReproEnv} make -j{Environment.ProcessorCount}";
         await _processUtil.BashRun(compileSnippet, "", extractPath, cancellationToken);
 
-        // **********************************
-        // ******** CORRECTED SECTION *******
-        // **********************************
+        // --- STEP 3: Install ---
+        // Correction 1: Changed "make install-strip" to "make install".
+        // The "install-strip" target doesn't exist in Git's Makefile.
         _logger.LogInformation("Installing Git...");
-        // 1. Changed "install-strip" to "install"
         var installSnippet = $"{ReproEnv} make install";
         await _processUtil.BashRun(installSnippet, "", extractPath, cancellationToken);
 
+        // --- STEP 4: Create Standalone Package ---
         string gitBinPath = Path.Combine(installDir, "bin", "git");
         string libDir = Path.Combine(installDir, "lib");
-        string libexecDir = Path.Combine(installDir, "libexec", "git-core"); // Path to helper executables
+        string libexecDir = Path.Combine(installDir, "libexec", "git-core");
 
         _directoryUtil.CreateIfDoesNotExist(libDir);
 
         _logger.LogInformation("Copying shared library dependencies into {libDir}", libDir);
-        var lddCmd = $"ldd {gitBinPath} | grep '=>' | awk '{{print $3}}' | xargs -I '{{}}' cp -L -u '{{}}' \"{libDir}\""; // Added -L to copy actual files, not symlinks
+        // Added -L to `cp` to copy the actual library file, not the symlink, which is crucial for a standalone package.
+        var lddCmd = $"ldd {gitBinPath} | grep '=>' | awk '{{print $3}}' | xargs -I '{{}}' cp -L -u '{{}}' \"{libDir}\"";
         await _processUtil.BashRun(lddCmd, "", tempDir, cancellationToken);
 
-        _logger.LogInformation("Stripping Git binary, helpers, and libraries...");
+        // --- STEP 5: Strip Binaries for Size Reduction ---
+        _logger.LogInformation("Stripping Git binary, helpers, and shared libraries...");
+
+        // First, strip the main git binary
         await _processUtil.BashRun($"strip {gitBinPath}", "", installDir, cancellationToken);
 
-        // 2. Strip the crucial helper executables
+        // Correction 2: Use a robust command to strip only binary files, ignoring scripts and directories.
+        // The old `strip .../*` command would fail on non-binary files.
+        // Note the double curly braces {{}} to escape them for the C# string.
+        var stripExecutablesCmd = $"find . -type f -exec file {{}} + | grep 'ELF executable' | cut -d: -f1 | xargs --no-run-if-empty strip";
+
+        // Strip helper executables in libexec/git-core
         if (Directory.Exists(libexecDir))
         {
             _logger.LogInformation("Stripping helper executables in {libexecDir}...", libexecDir);
-            await _processUtil.BashRun($"strip {libexecDir}/*", "", installDir, cancellationToken);
+            await _processUtil.BashRun(stripExecutablesCmd, "", libexecDir, cancellationToken);
         }
 
-        // 3. Strip the copied shared libraries
+        // Strip the copied shared libraries in lib
         if (Directory.Exists(libDir) && Directory.GetFiles(libDir).Any())
         {
-            await _processUtil.BashRun("strip lib/*", "", installDir, cancellationToken);
+            _logger.LogInformation("Stripping shared libraries in {libDir}...", libDir);
+            await _processUtil.BashRun(stripExecutablesCmd, "", libDir, cancellationToken);
         }
 
-        _logger.LogInformation("Removing unnecessary share directory...");
-        // 4. Do NOT remove libexec. It is required. Remove 'share' if you don't need man pages/docs.
-        await _processUtil.BashRun("rm -rf share", "", installDir, cancellationToken);
+        // --- STEP 6: Remove Unnecessary Files ---
+        _logger.LogInformation("Removing unnecessary directories to minimize size...");
+        // Correction 3: Be specific about what to remove.
+        // DO NOT remove 'libexec' (critical for git commands).
+        // DO NOT remove all of 'share' (breaks `git init`).
+        // Instead, remove only the non-essential parts of 'share'.
+        var unnecessaryShareItems = new[]
+        {
+        "doc",          // Documentation and man pages
+        "git-gui",      // Files for the git-gui client
+        "gitk-git",     // Files for the gitk client
+        "locale",       // Language translation files
+        "gitweb",       // Web interface for git
+        "perl5",        // Perl modules
+        "bash-completion" // Bash tab-completion scripts
+    };
 
+        foreach (var item in unnecessaryShareItems)
+        {
+            var itemPath = Path.Combine(installDir, "share", item);
+            if (Directory.Exists(itemPath) || File.Exists(itemPath))
+            {
+                await _processUtil.BashRun($"rm -rf {itemPath}", "", installDir, cancellationToken);
+            }
+        }
+
+        // --- STEP 7: Create Wrapper Script ---
         string scriptPath = Path.Combine(installDir, "git.sh");
         var scriptContents =
             $@"#!/bin/bash
