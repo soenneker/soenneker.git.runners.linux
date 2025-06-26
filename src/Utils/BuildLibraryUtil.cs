@@ -71,7 +71,7 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         string installDir = Path.Combine(tempDir, "git-standalone");
 
         _logger.LogInformation("Configuring for slim relocatable build...");
-        var configureCmd = $"./configure --prefix={installDir} --with-curl --with-openssl --with-expat --without-perl --without-readline --without-tcltk";
+        var configureCmd = $"./configure --prefix={installDir} --with-curl --with-openssl --with-expat --without-readline --without-tcltk";
         await _processUtil.BashRun($"{ReproEnv} {configureCmd}", "", extractPath, cancellationToken);
 
         _logger.LogInformation("Compiling Git…");
