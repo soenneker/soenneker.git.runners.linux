@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.Logging;
+using Soenneker.Extensions.Task;
 using Soenneker.Extensions.ValueTask;
 using Soenneker.Git.Runners.Linux.Utils.Abstract;
 using Soenneker.Utils.Directory.Abstract;
@@ -7,6 +8,7 @@ using Soenneker.Utils.File.Download.Abstract;
 using Soenneker.Utils.HttpClientCache.Abstract;
 using Soenneker.Utils.Process.Abstract;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -86,11 +88,15 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         // Correction 2: Use NO_PERL=1 to prevent Perl-based commands and libraries from being installed.
         // This reduces the final package size and removes the runtime dependency.
         _logger.LogInformation("Compiling Git without Perl dependencies…");
-        var compileSnippet = $"{ReproEnv} NO_PERL=1 make -j{Environment.ProcessorCount}";
+        var compileSnippet = $"{ReproEnv} NO_PERL=1 NO_GETTEXT=YesPlease NO_TCLTK=1 " +
+                              $"NO_INSTALL_HARDLINKS=YesPlease SKIP_DASHED_BUILT_INS=YesPlease " +
+                              $"make -j{Environment.ProcessorCount}";
         await _processUtil.BashRun(compileSnippet, "", extractPath, cancellationToken);
 
         _logger.LogInformation("Installing Git...");
-        var installSnippet = $"{ReproEnv} NO_PERL=1 make install";
+        var installSnippet = $"{ReproEnv} NO_PERL=1 NO_GETTEXT=YesPlease NO_TCLTK=1 " +
+                              $"NO_INSTALL_HARDLINKS=YesPlease SKIP_DASHED_BUILT_INS=YesPlease " +
+                              $"INSTALL_STRIP=yes make install";
         await _processUtil.BashRun(installSnippet, "", extractPath, cancellationToken);
 
         // --- STEP 4: Create Standalone Package (Stripping, etc.) ---
@@ -109,7 +115,8 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         _logger.LogInformation("Stripping Git binary, helpers, and shared libraries...");
         await _processUtil.BashRun($"strip {gitBinPath}", "", installDir, cancellationToken);
 
-        var stripExecutablesCmd = $"find . -type f -exec file {{}} + | grep 'ELF executable' | cut -d: -f1 | xargs --no-run-if-empty strip";
+        var stripExecutablesCmd = $"find . -type f -exec file {{}} + | grep -E 'ELF (executable|shared object)' " +
+                                   $"| cut -d: -f1 | xargs --no-run-if-empty strip --strip-unneeded";
 
         if (Directory.Exists(libexecDir))
         {
@@ -126,12 +133,12 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         _logger.LogInformation("Removing unnecessary directories to minimize size...");
         var unnecessaryShareItems = new[]
         {
-        "doc", "git-gui", "gitk-git", "locale", "gitweb", "perl5", "bash-completion"
-    };
+            "doc", "git-gui", "gitk-git", "locale", "gitweb", "perl5", "bash-completion"
+        };
 
-        foreach (var item in unnecessaryShareItems)
+        foreach (string item in unnecessaryShareItems)
         {
-            var itemPath = Path.Combine(installDir, "share", item);
+            string itemPath = Path.Combine(installDir, "share", item);
             if (Directory.Exists(itemPath) || File.Exists(itemPath))
             {
                 await _processUtil.BashRun($"rm -rf {itemPath}", "", installDir, cancellationToken);
@@ -139,8 +146,7 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         }
 
         string scriptPath = Path.Combine(installDir, "git.sh");
-        var scriptContents =
-            $@"#!/bin/bash
+        var scriptContents = $@"#!/bin/bash
 DIR=$(dirname ""$(readlink -f ""$0"")"")
 export LD_LIBRARY_PATH=""$DIR/lib:$LD_LIBRARY_PATH""
 exec ""$DIR/bin/git"" ""$@""";
@@ -159,7 +165,7 @@ exec ""$DIR/bin/git"" ""$@""";
 
         JsonElement[]? tags = await client.GetFromJsonAsync<JsonElement[]>("https://api.github.com/repos/git/git/tags", cancellationToken);
 
-        foreach (var tag in tags!)
+        foreach (JsonElement tag in tags!)
         {
             string name = tag.GetProperty("name").GetString()!;
             if (!name.Contains("-rc", StringComparison.OrdinalIgnoreCase) && !name.Contains("-beta", StringComparison.OrdinalIgnoreCase) &&
