@@ -25,8 +25,9 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
     private const string InstallScript = "sudo apt-get update && " + "sudo apt-get install -y build-essential pkg-config autoconf perl gettext " +
                                          "libcurl4-openssl-dev libssl-dev libexpat1-dev zlib1g-dev";
 
-    private const string CommonFlags = "NO_PERL=1 " + "NO_GETTEXT=YesPlease NO_TCLTK=1 NO_PYTHON=1 NO_ICONV=1 " +
-                                       "SKIP_DASHED_BUILT_INS=YesPlease NO_INSTALL_HARDLINKS=YesPlease INSTALL_SYMLINKS=YesPlease";
+    private const string CommonFlags = "NO_PERL=1 NO_TCLTK=1 NO_PYTHON=1 NO_ICONV=1 NO_GETTEXT=YesPlease " +
+                                       "NO_SCALAR=1 NO_SVN=1 NO_P4=1 NO_DAEMON=1 " +
+                                       "NO_INSTALL_HARDLINKS=YesPlease INSTALL_SYMLINKS=YesPlease";
 
     private readonly ILogger<BuildLibraryUtil> _logger;
     private readonly IDirectoryUtil _directoryUtil;
@@ -103,7 +104,7 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         // --- STEP 6  Prune unneeded runtime files ----------------------------------------
         _logger.LogInformation("Removing docs, templates, and other superfluous files …");
         string[] toDelete =
-        {
+        [
             Path.Combine(installDir, "share", "man"),
             Path.Combine(installDir, "share", "info"),
             Path.Combine(installDir, "share", "doc"),
@@ -114,7 +115,7 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
             Path.Combine(installDir, "share", "gitweb"),
             Path.Combine(installDir, "share", "perl5"),
             Path.Combine(installDir, "share", "bash-completion")
-        };
+        ];
 
         foreach (string path in toDelete)
         {
