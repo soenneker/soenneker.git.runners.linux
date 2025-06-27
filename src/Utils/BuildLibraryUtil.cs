@@ -4,10 +4,12 @@ using Soenneker.Git.Runners.Linux.Utils.Abstract;
 using Soenneker.Utils.Directory.Abstract;
 using Soenneker.Utils.File.Abstract;
 using Soenneker.Utils.File.Download.Abstract;
+using Soenneker.Utils.FileSync.Abstract;
 using Soenneker.Utils.HttpClientCache.Abstract;
 using Soenneker.Utils.Process.Abstract;
 using System;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -21,13 +23,17 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
 {
     private const string ReproEnv = "SOURCE_DATE_EPOCH=1620000000 TZ=UTC LC_ALL=C";
 
-    // NOTE: gettext was removed; autoconf + perl were added (needed for ./configure generation)
     private const string InstallScript = "sudo apt-get update && " + "sudo apt-get install -y build-essential pkg-config autoconf perl gettext " +
                                          "libcurl4-openssl-dev libssl-dev libexpat1-dev zlib1g-dev";
 
+    // --- MODIFICATION 1: Added more NO_* flags and compiler flags ---
     private const string CommonFlags = "NO_PERL=1 NO_TCLTK=1 NO_PYTHON=1 NO_ICONV=1 NO_GETTEXT=YesPlease " +
-                                       "NO_SCALAR=1 NO_SVN=1 NO_P4=1 NO_DAEMON=1 " +
+                                       "NO_SCALAR=1 NO_SVN=1 NO_P4=1 NO_DAEMON=1 NO_NSEC=1 " +
                                        "NO_INSTALL_HARDLINKS=YesPlease INSTALL_SYMLINKS=YesPlease";
+
+    private const string BuildFlags = "CFLAGS=\"-Os -ffunction-sections -fdata-sections\" " +
+                                      "LDFLAGS=\"-Wl,--gc-sections\"";
+
 
     private readonly ILogger<BuildLibraryUtil> _logger;
     private readonly IDirectoryUtil _directoryUtil;
@@ -35,9 +41,10 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
     private readonly IFileDownloadUtil _fileDownloadUtil;
     private readonly IProcessUtil _processUtil;
     private readonly IFileUtil _fileUtil;
+    private readonly IFileUtilSync _fileUtilSync;
 
     public BuildLibraryUtil(ILogger<BuildLibraryUtil> logger, IDirectoryUtil directoryUtil, IHttpClientCache httpClientCache,
-        IFileDownloadUtil fileDownloadUtil, IProcessUtil processUtil, IFileUtil fileUtil)
+        IFileDownloadUtil fileDownloadUtil, IProcessUtil processUtil, IFileUtil fileUtil, IFileUtilSync fileUtilSync)
     {
         _logger = logger;
         _directoryUtil = directoryUtil;
@@ -45,11 +52,12 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         _fileDownloadUtil = fileDownloadUtil;
         _processUtil = processUtil;
         _fileUtil = fileUtil;
+        _fileUtilSync = fileUtilSync;
     }
 
     public async ValueTask<string> Build(CancellationToken cancellationToken)
     {
-        // --- STEP 1  Download Git source --------------------------------------------------
+        // --- STEP 1  Download Git source --------------------------------------------------
         string tempDir = await _directoryUtil.CreateTempDirectory(cancellationToken).NoSync();
 
         string latestVersion = await GetLatestStableGitTag(cancellationToken);
@@ -60,7 +68,7 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         _logger.LogInformation("Downloading Git source from {url}", downloadUrl);
         await _fileDownloadUtil.Download(downloadUrl, archivePath, cancellationToken: cancellationToken);
 
-        // --- STEP 2  Prepare build host ---------------------------------------------------
+        // --- STEP 2  Prepare build host ---------------------------------------------------
         _logger.LogInformation("Installing build dependencies ...");
         await _processUtil.BashRun(InstallScript, "", tempDir, cancellationToken);
 
@@ -71,7 +79,7 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         string versionTrimmed = latestVersion.TrimStart('v');
         string extractPath = Path.Combine(tempDir, $"git-{versionTrimmed}");
 
-        // --- STEP 3  Configure ------------------------------------------------------------
+        // --- STEP 3  Configure ------------------------------------------------------------
         _logger.LogInformation("Generating configure script …");
         await _processUtil.BashRun($"{ReproEnv} make configure", "", extractPath, cancellationToken);
 
@@ -80,28 +88,32 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         _logger.LogInformation("Configuring for slim relocatable build …");
         string configureCmd =
             $"./configure --prefix={installDir} --with-curl --with-openssl " +
-            "--without-readline --without-tcltk"; // expat, iconv, gettext disabled via Make flags
+            "--without-readline --without-tcltk --without-expat";
         await _processUtil.BashRun($"{ReproEnv} {configureCmd}", "", extractPath, cancellationToken);
 
-        // --- STEP 4  Compile & install ----------------------------------------------------
+        // --- STEP 4  Compile & install ----------------------------------------------------
         _logger.LogInformation("Compiling Git …");
-        string compileSnippet = $"{ReproEnv} {CommonFlags} make -j{Environment.ProcessorCount}";
+        // --- MODIFICATION 2: Added BuildFlags to compile and install steps ---
+        string compileSnippet = $"{ReproEnv} {BuildFlags} {CommonFlags} make -j{Environment.ProcessorCount}";
         await _processUtil.BashRun(compileSnippet, "", extractPath, cancellationToken);
 
         _logger.LogInformation("Installing Git (strip & symlink helpers) …");
-        string installSnippet = $"{ReproEnv} {CommonFlags} INSTALL_STRIP=yes make install";
+        string installSnippet = $"{ReproEnv} {BuildFlags} {CommonFlags} INSTALL_STRIP=yes make install";
         await _processUtil.BashRun(installSnippet, "", extractPath, cancellationToken);
 
-        // --- STEP 5  Bundle shared libraries ---------------------------------------------
+        // --- STEP 5  Bundle shared libraries ---------------------------------------------
         string gitBinPath = Path.Combine(installDir, "bin", "git");
         string libDir = Path.Combine(installDir, "lib");
         _directoryUtil.CreateIfDoesNotExist(libDir);
 
         _logger.LogInformation("Copying shared library dependencies …");
-        string lddCmd = $"ldd {gitBinPath} | grep '=>' | awk '{{print $3}}' | xargs -I '{{}}' cp -L -u '{{}}' '{libDir}'";
+        // --- MODIFICATION 3: Smarter ldd command to exclude system libs ---
+        string lddCmd = $"ldd {gitBinPath} | grep '=>' | awk '{{print $3}}' " +
+                        "| grep -vE '(/lib/|/lib64/|/usr/lib/)((ld-linux|libc|libdl|libm|libpthread|librt|libutil|libresolv|libnss|libcrypt).so)' " +
+                        "| xargs -I '{{}}' cp -L -u '{{}}' '{libDir}'";
         await _processUtil.BashRun(lddCmd, "", tempDir, cancellationToken);
 
-        // --- STEP 6  Prune unneeded runtime files ----------------------------------------
+        // --- STEP 6  Prune unneeded runtime files ----------------------------------------
         _logger.LogInformation("Removing docs, templates, and other superfluous files …");
         string[] toDelete =
         [
@@ -117,13 +129,31 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
             Path.Combine(installDir, "share", "bash-completion")
         ];
 
-        foreach (string path in toDelete)
+        foreach (string path in toDelete.Where(p => Directory.Exists(p) || File.Exists(p)))
         {
-            if (Directory.Exists(path) || File.Exists(path))
-                await _processUtil.BashRun($"rm -rf {path}", "", installDir, cancellationToken);
+            await _processUtil.BashRun($"rm -rf {path}", "", installDir, cancellationToken);
         }
 
-        // --- STEP 7  Wrapper script -------------------------------------------------------
+        // --- NEW STEP 6.5: Aggressive pruning of unneeded commands ---
+        _logger.LogInformation("Pruning unneeded helper commands ...");
+        string[] commandsToDelete =
+        [
+            "git-sh-i18n", "git-sh-setup", "git-cvsimport", "git-cvsserver", "git-archimport",
+            "git-send-email", "git-imap-send", "git-instaweb", "git-p4", "git-svn", "git-daemon"
+        ];
+
+        string gitCorePath = Path.Combine(installDir, "libexec", "git-core");
+        foreach (string command in commandsToDelete)
+        {
+            string commandPath = Path.Combine(gitCorePath, command);
+
+            if (File.Exists(commandPath))
+            {
+                _fileUtilSync.Delete(commandPath);
+            }
+        }
+
+        // --- STEP 7  Wrapper script -------------------------------------------------------
         string scriptPath = Path.Combine(installDir, "git.sh");
         string scriptContents = "#!/bin/bash\n" + "DIR=$(dirname \"$(readlink -f \"$0\")\")\n" + "export LD_LIBRARY_PATH=\"$DIR/lib:$LD_LIBRARY_PATH\"\n" +
                                 "exec \"$DIR/bin/git\" \"$@\"";
