@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Logging;
-using Soenneker.Extensions.Task;
 using Soenneker.Extensions.ValueTask;
 using Soenneker.Git.Runners.Linux.Utils.Abstract;
 using Soenneker.Utils.Directory.Abstract;
@@ -8,9 +7,7 @@ using Soenneker.Utils.File.Download.Abstract;
 using Soenneker.Utils.HttpClientCache.Abstract;
 using Soenneker.Utils.Process.Abstract;
 using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
