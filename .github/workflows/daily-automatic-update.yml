@@ -8,10 +8,10 @@ on:
       - main
 
 env:
-  USERNAME: ${{ secrets.USERNAME }}
+  GH_USERNAME: ${{ secrets.GH_USERNAME }}
   GH__TOKEN: ${{ secrets.GH__TOKEN }}
-  NAME: ${{ secrets.NAME }}
-  EMAIL: ${{ secrets.EMAIL }}
+  GIT__NAME: ${{ secrets.GIT__NAME }}
+  GIT__EMAIL: ${{ secrets.GIT__EMAIL }}
   NUGET__TOKEN: ${{ secrets.NUGET__TOKEN }}
   GIT__TOKEN: ${{ secrets.GIT__TOKEN }}
   
