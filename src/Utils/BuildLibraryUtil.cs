@@ -48,7 +48,7 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
 
     public async ValueTask<string> Build(CancellationToken cancellationToken)
     {
-        // --- STEP 1  Download Git source --------------------------------------------------
+        // ── STEP 1 — Download Git source ───────────────────────────────────────────────
         string tempDir = await _directoryUtil.CreateTempDirectory(cancellationToken).NoSync();
 
         string latestVersion = await GetLatestStableGitTag(cancellationToken);
@@ -59,99 +59,96 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         _logger.LogInformation("Downloading Git source from {url}", downloadUrl);
         await _fileDownloadUtil.Download(downloadUrl, archivePath, cancellationToken: cancellationToken);
 
-        // --- STEP 2  Prepare build host ---------------------------------------------------
-        _logger.LogInformation("Installing build dependencies ...");
+        // ── STEP 2 — Prepare build host ────────────────────────────────────────────────
+        _logger.LogInformation("Installing build dependencies …");
         await _processUtil.BashRun(InstallScript, tempDir, cancellationToken: cancellationToken);
 
         _logger.LogInformation("Extracting Git source …");
-        string tarSnippet = $"{ReproEnv} tar --sort=name --mtime=@1620000000 --owner=0 --group=0 --numeric-owner -xzf {archivePath}";
+        string tarSnippet = $"{ReproEnv} tar --sort=name --mtime=@1620000000 --owner=0 --group=0 " + $"--numeric-owner -xzf {archivePath}";
         await _processUtil.BashRun(tarSnippet, tempDir, cancellationToken: cancellationToken);
 
         string versionTrimmed = latestVersion.TrimStart('v');
         string extractPath = Path.Combine(tempDir, $"git-{versionTrimmed}");
 
-        // --- STEP 3  Configure ------------------------------------------------------------
+        // ── STEP 3 — Configure (fixed prefix) ──────────────────────────────────────────
         _logger.LogInformation("Generating configure script …");
         await _processUtil.BashRun($"{ReproEnv} make configure", extractPath, cancellationToken: cancellationToken);
 
-        string installDir = Path.Combine(tempDir, "git-standalone");
+        // <staging>/usr will become our final tree; prefix remains /usr inside binaries
+        string stagingDir = Path.Combine(tempDir, "git-standalone");
 
         _logger.LogInformation("Configuring for slim relocatable build …");
         string configureCmd =
-            $"./configure --prefix={installDir} --with-curl --with-openssl " +
-            "--without-readline --without-tcltk"; // expat, iconv, gettext disabled via Make flags
+            "./configure --prefix=/usr --with-curl --with-openssl " + "--without-readline --without-tcltk"; // gettext/iconv disabled via Make flags
         await _processUtil.BashRun($"{ReproEnv} {configureCmd}", extractPath, cancellationToken: cancellationToken);
 
-        // --- STEP 4  Compile & install ----------------------------------------------------
+        // ── STEP 4 — Compile & install (DESTDIR) ───────────────────────────────────────
         _logger.LogInformation("Compiling Git …");
         string compileSnippet = $"{ReproEnv} {CommonFlags} make -j{Environment.ProcessorCount}";
         await _processUtil.BashRun(compileSnippet, extractPath, cancellationToken: cancellationToken);
 
         _logger.LogInformation("Installing Git (strip & symlink helpers) …");
-        string installSnippet = $"{ReproEnv} {CommonFlags} INSTALL_STRIP=yes make install";
+        string installSnippet = $"{ReproEnv} {CommonFlags} INSTALL_STRIP=yes make install DESTDIR={stagingDir}";
         await _processUtil.BashRun(installSnippet, extractPath, cancellationToken: cancellationToken);
 
-        // --- STEP 5  Bundle shared libraries ---------------------------------------------
-        string gitBinPath = Path.Combine(installDir, "bin", "git");
-        string libDir = Path.Combine(installDir, "lib");
+        // ── STEP 5 — Bundle shared libraries ───────────────────────────────────────────
+        string gitBinPath = Path.Combine(stagingDir, "usr", "bin", "git");
+        string libDir = Path.Combine(stagingDir, "usr", "lib");
         _directoryUtil.CreateIfDoesNotExist(libDir);
 
         _logger.LogInformation("Copying shared library dependencies …");
-        string lddCmd = $"ldd {gitBinPath} | grep '=>' | awk '{{print $3}}' | xargs -I '{{}}' cp -L -u '{{}}' '{libDir}'";
+        string lddCmd = $"ldd {gitBinPath} | grep '=>' | awk '{{print $3}}' | " + $"xargs -I '{{}}' cp -L -u '{{}}' '{libDir}'";
         await _processUtil.BashRun(lddCmd, tempDir, cancellationToken: cancellationToken);
 
         _logger.LogInformation("Stripping unneeded symbols from all ELF binaries …");
-        await StripAllExecutables(installDir, cancellationToken);
+        await StripAllExecutables(stagingDir, cancellationToken);
 
-        // --- STEP 6  Prune unneeded runtime files ----------------------------------------
+        // ── STEP 6 — Prune unneeded runtime files ──────────────────────────────────────
         _logger.LogInformation("Removing docs, templates, and other superfluous files …");
         string[] toDelete =
         {
-            Path.Combine(installDir, "share", "man"),
-            Path.Combine(installDir, "share", "info"),
-            Path.Combine(installDir, "share", "doc"),
-            Path.Combine(installDir, "share", "locale"),
-            Path.Combine(installDir, "share", "git-core", "templates"),
-            Path.Combine(installDir, "share", "git-gui"),
-            Path.Combine(installDir, "share", "gitk-git"),
-            Path.Combine(installDir, "share", "gitweb"),
-            Path.Combine(installDir, "share", "perl5"),
-            Path.Combine(installDir, "share", "bash-completion")
+            Path.Combine(stagingDir, "usr", "share", "man"),
+            Path.Combine(stagingDir, "usr", "share", "info"),
+            Path.Combine(stagingDir, "usr", "share", "doc"),
+            Path.Combine(stagingDir, "usr", "share", "locale"),
+            Path.Combine(stagingDir, "usr", "share", "git-core", "templates"),
+            Path.Combine(stagingDir, "usr", "share", "git-gui"),
+            Path.Combine(stagingDir, "usr", "share", "gitk-git"),
+            Path.Combine(stagingDir, "usr", "share", "gitweb"),
+            Path.Combine(stagingDir, "usr", "share", "perl5"),
+            Path.Combine(stagingDir, "usr", "share", "bash-completion")
         };
 
         foreach (string path in toDelete)
         {
             if (Directory.Exists(path) || File.Exists(path))
-                await _processUtil.BashRun($"rm -rf {path}", installDir, cancellationToken: cancellationToken);
+                await _processUtil.BashRun($"rm -rf {path}", stagingDir, cancellationToken: cancellationToken);
         }
 
-        _logger.LogInformation("Pruning unneeded helper commands ...");
+        _logger.LogInformation("Pruning unneeded helper commands …");
         string[] commandsToDelete =
         [
-            "git-sh-i18n", "git-sh-setup", "git-cvsimport", "git-cvsserver", "git-archimport", "git-remote-ftp", "git-remote-ftps",
-            "git-send-email", "git-imap-send", "git-instaweb", "git-p4", "git-svn", "git-daemon", "git-web--browse", "git-instaweb"
+            "git-sh-i18n", "git-sh-setup", "git-cvsimport", "git-cvsserver", "git-archimport",
+            "git-remote-ftp", "git-remote-ftps", "git-send-email", "git-imap-send", "git-instaweb",
+            "git-p4", "git-svn", "git-daemon", "git-web--browse", "git-instaweb"
         ];
-        string gitCorePath = Path.Combine(installDir, "libexec", "git-core");
+        string gitCorePath = Path.Combine(stagingDir, "usr", "libexec", "git-core");
         foreach (string command in commandsToDelete)
         {
             string commandPath = Path.Combine(gitCorePath, command);
             if (File.Exists(commandPath))
-            {
                 File.Delete(commandPath);
-            }
         }
 
-
-        // --- STEP 7  Wrapper script -------------------------------------------------------
-        string scriptPath = Path.Combine(installDir, "git.sh");
-        string scriptContents = "#!/bin/bash\n" + "DIR=$(dirname \"$(readlink -f \"$0\")\")\n" + "export LD_LIBRARY_PATH=\"$DIR/lib:$LD_LIBRARY_PATH\"\n" +
-                                "exec \"$DIR/bin/git\" \"$@\"";
-
+        // ── STEP 7 — Wrapper script ────────────────────────────────────────────────────
+        string scriptPath = Path.Combine(stagingDir, "git.sh");
+        string scriptContents = "#!/bin/bash\n" + "DIR=$(dirname \"$(readlink -f \"$0\")\")\n" + "export LD_LIBRARY_PATH=\"$DIR/usr/lib:$LD_LIBRARY_PATH\"\n" +
+                                "exec \"$DIR/usr/bin/git\" \"$@\"";
         await File.WriteAllTextAsync(scriptPath, scriptContents, cancellationToken);
-        await _processUtil.BashRun($"chmod +x {scriptPath}", tempDir, cancellationToken: cancellationToken);
+        await _processUtil.BashRun($"chmod +x {scriptPath}", stagingDir, cancellationToken: cancellationToken);
 
-        _logger.LogInformation("Standalone Git folder built at {path}", installDir);
-        return installDir;
+        _logger.LogInformation("Standalone Git folder built at {path}", stagingDir);
+        return stagingDir;
     }
 
     private async ValueTask StripAllExecutables(string root, CancellationToken ct)
