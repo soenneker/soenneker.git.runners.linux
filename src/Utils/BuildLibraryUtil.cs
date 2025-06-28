@@ -61,18 +61,18 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
 
         // --- STEP 2  Prepare build host ---------------------------------------------------
         _logger.LogInformation("Installing build dependencies ...");
-        await _processUtil.BashRun(InstallScript, "", tempDir, cancellationToken);
+        await _processUtil.BashRun(InstallScript, tempDir, cancellationToken: cancellationToken);
 
         _logger.LogInformation("Extracting Git source …");
         string tarSnippet = $"{ReproEnv} tar --sort=name --mtime=@1620000000 --owner=0 --group=0 --numeric-owner -xzf {archivePath}";
-        await _processUtil.BashRun(tarSnippet, "", tempDir, cancellationToken);
+        await _processUtil.BashRun(tarSnippet, tempDir, cancellationToken: cancellationToken);
 
         string versionTrimmed = latestVersion.TrimStart('v');
         string extractPath = Path.Combine(tempDir, $"git-{versionTrimmed}");
 
         // --- STEP 3  Configure ------------------------------------------------------------
         _logger.LogInformation("Generating configure script …");
-        await _processUtil.BashRun($"{ReproEnv} make configure", "", extractPath, cancellationToken);
+        await _processUtil.BashRun($"{ReproEnv} make configure", extractPath, cancellationToken: cancellationToken);
 
         string installDir = Path.Combine(tempDir, "git-standalone");
 
@@ -80,16 +80,16 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         string configureCmd =
             $"./configure --prefix={installDir} --with-curl --with-openssl " +
             "--without-readline --without-tcltk"; // expat, iconv, gettext disabled via Make flags
-        await _processUtil.BashRun($"{ReproEnv} {configureCmd}", "", extractPath, cancellationToken);
+        await _processUtil.BashRun($"{ReproEnv} {configureCmd}", extractPath, cancellationToken: cancellationToken);
 
         // --- STEP 4  Compile & install ----------------------------------------------------
         _logger.LogInformation("Compiling Git …");
         string compileSnippet = $"{ReproEnv} {CommonFlags} make -j{Environment.ProcessorCount}";
-        await _processUtil.BashRun(compileSnippet, "", extractPath, cancellationToken);
+        await _processUtil.BashRun(compileSnippet, extractPath, cancellationToken: cancellationToken);
 
         _logger.LogInformation("Installing Git (strip & symlink helpers) …");
         string installSnippet = $"{ReproEnv} {CommonFlags} INSTALL_STRIP=yes make install";
-        await _processUtil.BashRun(installSnippet, "", extractPath, cancellationToken);
+        await _processUtil.BashRun(installSnippet, extractPath, cancellationToken: cancellationToken);
 
         // --- STEP 5  Bundle shared libraries ---------------------------------------------
         string gitBinPath = Path.Combine(installDir, "bin", "git");
@@ -98,7 +98,7 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
 
         _logger.LogInformation("Copying shared library dependencies …");
         string lddCmd = $"ldd {gitBinPath} | grep '=>' | awk '{{print $3}}' | xargs -I '{{}}' cp -L -u '{{}}' '{libDir}'";
-        await _processUtil.BashRun(lddCmd, "", tempDir, cancellationToken);
+        await _processUtil.BashRun(lddCmd, tempDir, cancellationToken: cancellationToken);
 
         _logger.LogInformation("Stripping unneeded symbols from all ELF binaries …");
         await StripAllExecutables(installDir, cancellationToken);
@@ -122,7 +122,7 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         foreach (string path in toDelete)
         {
             if (Directory.Exists(path) || File.Exists(path))
-                await _processUtil.BashRun($"rm -rf {path}", "", installDir, cancellationToken);
+                await _processUtil.BashRun($"rm -rf {path}", installDir, cancellationToken: cancellationToken);
         }
 
         _logger.LogInformation("Pruning unneeded helper commands ...");
@@ -148,7 +148,7 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
                                 "exec \"$DIR/bin/git\" \"$@\"";
 
         await File.WriteAllTextAsync(scriptPath, scriptContents, cancellationToken);
-        await _processUtil.BashRun($"chmod +x {scriptPath}", "", tempDir, cancellationToken);
+        await _processUtil.BashRun($"chmod +x {scriptPath}", tempDir, cancellationToken: cancellationToken);
 
         _logger.LogInformation("Standalone Git folder built at {path}", installDir);
         return installDir;
@@ -162,11 +162,9 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         //   find  <root>  -type f -executable \
         //     -exec sh -c 'file -b "$1" | grep -q ELF && strip --strip-unneeded "$1"' _ {} \;
         //
-        string stripCmd =
-            $"find \"{root}\" -type f -executable " +
-            $"-exec sh -c 'file -b \"$1\" | grep -q ELF && strip --strip-unneeded \"$1\"' _ {{}} \\;";
+        string stripCmd = $"find \"{root}\" -type f -executable " + $"-exec sh -c 'file -b \"$1\" | grep -q ELF && strip --strip-unneeded \"$1\"' _ {{}} \\;";
 
-        await _processUtil.BashRun(stripCmd, "", root, ct);
+        await _processUtil.BashRun(stripCmd, root, cancellationToken: ct);
     }
 
     public async ValueTask<string> GetLatestStableGitTag(CancellationToken cancellationToken = default)
