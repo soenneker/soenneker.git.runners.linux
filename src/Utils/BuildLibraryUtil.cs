@@ -110,7 +110,7 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         _logger.LogInformation("Verifying HTTPS support with a real clone …");
 
         string verifyDir = Path.Combine(tempDir, "clone-test");
-        await _processUtil.BashRun($"{gitBin} clone --depth 1 https://github.com/git/git {verifyDir}", tempDir, cancellationToken: cancellationToken);
+        await _processUtil.BashRun($"{wrapper} clone --depth 1 https://github.com/git/git {verifyDir}", tempDir, cancellationToken: cancellationToken);
 
         _logger.LogInformation("Slim Git bundle built at {path}", stageDir);
         return stageDir;
