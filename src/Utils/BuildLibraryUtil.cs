@@ -71,10 +71,12 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
 
         // ── 4. build & install *only* needed progs ─────────────────────────────────
         const string CommonFlags = "NO_PERL=1 NO_GETTEXT=YesPlease NO_TCLTK=1 NO_PYTHON=1 NO_ICONV=1 " +
-                                   "NO_INSTALL_HARDLINKS=YesPlease INSTALL_SYMLINKS=YesPlease " + "RUNTIME_PREFIX=YesPlease";
+                                    "NO_INSTALL_HARDLINKS=YesPlease INSTALL_SYMLINKS=YesPlease " + "RUNTIME_PREFIX=YesPlease";
 
-        const string Needed =
-            "PROGRAMS='git git-remote-curl git-remote-http git-remote-https git-remote-ftp git-remote-ftps'"; // installs curl helper + symlinks
+        // !! THIS IS THE FIX !!
+        // Only specify the REAL programs. 'git-remote-http' handles https/ftp/ftps,
+        // and 'INSTALL_SYMLINKS' will create the necessary aliases.
+        const string Needed = "PROGRAMS='git git-remote-http'";
 
         await _processUtil.BashRun($"{ReproEnv} {Needed} {CommonFlags} make -j{Environment.ProcessorCount}", srcDir, cancellationToken: cancellationToken);
 
@@ -94,15 +96,18 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         // ── 6. prune leftover cruft (docs, locale, etc.) ───────────────────────────
         string[] junk =
         {
-            Path.Combine(stageDir, "share") // entire share dir is now unused
-        };
+        Path.Combine(stageDir, "usr", "share") // The 'usr' is important due to --prefix
+    };
         foreach (string j in junk)
             if (Directory.Exists(j) || File.Exists(j))
                 await _processUtil.BashRun($"rm -rf {j}", stageDir, cancellationToken: cancellationToken);
 
-        // ── 7. wrapper (LD_LIBRARY_PATH only) ──────────────────────────────────────
+        // ── 7. wrapper (LD_LIBRARY_PATH and PATH) ──────────────────────────────────
         string wrapper = Path.Combine(stageDir, "git.sh");
-        string script = "#!/bin/bash\n" + "DIR=$(dirname \"$(readlink -f \"$0\")\")\n" + "export LD_LIBRARY_PATH=\"$DIR/lib:$LD_LIBRARY_PATH\"\n" +
+        string script = "#!/bin/bash\n" +
+                        "DIR=$(dirname \"$(readlink -f \"$0\")\")\n" +
+                        "export LD_LIBRARY_PATH=\"$DIR/lib:$LD_LIBRARY_PATH\"\n" +
+                        "export PATH=\"$DIR/usr/libexec/git-core:$PATH\"\n" +
                         "exec \"$DIR/usr/bin/git\" \"$@\"";
         await File.WriteAllTextAsync(wrapper, script, cancellationToken);
         await _processUtil.BashRun($"chmod +x {wrapper}", stageDir, cancellationToken: cancellationToken);
