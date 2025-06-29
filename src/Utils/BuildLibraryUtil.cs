@@ -25,9 +25,6 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
     private const string InstallScript = "sudo apt-get update && " + "sudo apt-get install -y build-essential pkg-config autoconf perl gettext " +
                                          "libcurl4-openssl-dev libssl-dev libexpat1-dev zlib1g-dev";
 
-    private const string CommonFlags = "NO_PERL=1 " + "NO_GETTEXT=YesPlease NO_TCLTK=1 NO_PYTHON=1 NO_ICONV=1 " +
-                                       "SKIP_DASHED_BUILT_INS=YesPlease NO_INSTALL_HARDLINKS=YesPlease INSTALL_SYMLINKS=YesPlease";
-
     private readonly ILogger<BuildLibraryUtil> _logger;
     private readonly IDirectoryUtil _directoryUtil;
     private readonly IHttpClientCache _httpClientCache;
@@ -79,9 +76,8 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
 
         // ── 4. build & install *only* needed progs ─────────────────────────────────
         const string CommonFlags =
-            "NO_PERL=1 NO_GETTEXT=YesPlease NO_TCLTK=1 NO_PYTHON=1 NO_ICONV=1 "
-          + "SKIP_DASHED_BUILT_INS=YesPlease NO_INSTALL_HARDLINKS=YesPlease "
-          + "INSTALL_SYMLINKS=YesPlease";
+            "NO_PERL=1 NO_GETTEXT=YesPlease NO_TCLTK=1 NO_PYTHON=1 NO_ICONV=1 " +
+            "NO_INSTALL_HARDLINKS=YesPlease INSTALL_SYMLINKS=YesPlease";
 
         const string Needed = "PROGRAMS='git git-remote-curl git-remote-http git-remote-https git-remote-ftp git-remote-ftps'"; // installs curl helper + symlinks
 
