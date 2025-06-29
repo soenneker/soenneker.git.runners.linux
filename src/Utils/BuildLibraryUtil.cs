@@ -71,7 +71,8 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
 
         // ── 4. build & install *only* needed progs ─────────────────────────────────
         const string CommonFlags = "NO_PERL=1 NO_GETTEXT=YesPlease NO_TCLTK=1 NO_PYTHON=1 NO_ICONV=1 " +
-                                    "NO_INSTALL_HARDLINKS=YesPlease INSTALL_SYMLINKS=YesPlease " + "RUNTIME_PREFIX=YesPlease";
+                                    "NO_INSTALL_HARDLINKS=YesPlease INSTALL_SYMLINKS=YesPlease SKIP_DASHED_BUILT_INS=YesPlease" + 
+                                    "RUNTIME_PREFIX=YesPlease";
 
         // !! THIS IS THE FIX !!
         // Only specify the REAL programs. 'git-remote-http' handles https/ftp/ftps,
