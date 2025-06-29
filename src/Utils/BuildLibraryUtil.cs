@@ -72,10 +72,9 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         await _processUtil.BashRun($"{ReproEnv} make configure", srcDir, cancellationToken: cancellationToken);
 
         string stageDir = Path.Combine(tempDir, "git");        // final bundle root
-
         string cfg =
-            "./configure --prefix=/ --enable-runtime-prefix "
-          + "--with-curl --with-openssl --without-readline --without-tcltk";
+            "./configure --prefix=/usr --enable-runtime-prefix "
+            + "--with-curl --with-openssl --without-readline --without-tcltk";
         await _processUtil.BashRun($"{ReproEnv} {cfg}", srcDir, cancellationToken: cancellationToken);
 
         // ── 4. build & install *only* needed progs ─────────────────────────────────
@@ -95,7 +94,7 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
             srcDir, cancellationToken: cancellationToken);
 
         // ── 5. bundle & strip shared libs ──────────────────────────────────────────
-        string gitBin = Path.Combine(stageDir, "bin", "git");
+        string gitBin = Path.Combine(stageDir, "usr", "bin", "git");
         string libDir = Path.Combine(stageDir, "lib");
         _directoryUtil.CreateIfDoesNotExist(libDir);
 
@@ -119,9 +118,9 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         string wrapper = Path.Combine(stageDir, "git.sh");
         string script =
             "#!/bin/bash\n"
-          + "DIR=$(dirname \"$(readlink -f \"$0\")\")\n"
-          + "export LD_LIBRARY_PATH=\"$DIR/lib:$LD_LIBRARY_PATH\"\n"
-          + "exec \"$DIR/bin/git\" \"$@\"";
+            + "DIR=$(dirname \"$(readlink -f \"$0\")\")\n"
+            + "export LD_LIBRARY_PATH=\"$DIR/lib:$LD_LIBRARY_PATH\"\n"
+            + "exec \"$DIR/usr/bin/git\" \"$@\"";
         await File.WriteAllTextAsync(wrapper, script, cancellationToken);
         await _processUtil.BashRun($"chmod +x {wrapper}", stageDir, cancellationToken: cancellationToken);
 
