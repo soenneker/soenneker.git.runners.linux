@@ -84,7 +84,7 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
           + "SKIP_DASHED_BUILT_INS=YesPlease NO_INSTALL_HARDLINKS=YesPlease "
           + "INSTALL_SYMLINKS=YesPlease";
 
-        const string Needed = "PROGRAMS='git git-remote-curl'";   // installs curl helper + symlinks
+        const string Needed = "PROGRAMS='git git-remote-curl git-remote-http git-remote-https git-remote-ftp git-remote-ftps'"; // installs curl helper + symlinks
 
         await _processUtil.BashRun(
             $"{ReproEnv} {Needed} {CommonFlags} make -j{Environment.ProcessorCount}",
@@ -138,20 +138,6 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
             "find \"" + root + "\" -type f \\( -perm -u+x -o -name '*.so*' \\) "
           + "-exec sh -c 'file -b \"$1\" | grep -q ELF && strip --strip-unneeded \"$1\"' _ {} \\;";
         await _processUtil.BashRun(cmd, root, cancellationToken: ct);
-    }
-
-
-    private async ValueTask StripAllExecutables(string root, CancellationToken ct)
-    {
-        // Finds every executable file under <root>, checks if it is an ELF,
-        // then strips unneeded sections & symbols in-place.
-        //
-        //   find  <root>  -type f -executable \
-        //     -exec sh -c 'file -b "$1" | grep -q ELF && strip --strip-unneeded "$1"' _ {} \;
-        //
-        string stripCmd = $"find \"{root}\" -type f -executable " + $"-exec sh -c 'file -b \"$1\" | grep -q ELF && strip --strip-unneeded \"$1\"' _ {{}} \\;";
-
-        await _processUtil.BashRun(stripCmd, root, cancellationToken: ct);
     }
 
     public async ValueTask<string> GetLatestStableGitTag(CancellationToken cancellationToken = default)
