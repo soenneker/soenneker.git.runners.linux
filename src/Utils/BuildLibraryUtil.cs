@@ -2,7 +2,6 @@ using Microsoft.Extensions.Logging;
 using Soenneker.Extensions.ValueTask;
 using Soenneker.Git.Runners.Linux.Utils.Abstract;
 using Soenneker.Utils.Directory.Abstract;
-using Soenneker.Utils.File.Abstract;
 using Soenneker.Utils.File.Download.Abstract;
 using Soenneker.Utils.HttpClientCache.Abstract;
 using Soenneker.Utils.Process.Abstract;
@@ -19,10 +18,10 @@ namespace Soenneker.Git.Runners.Linux.Utils;
 /// <inheritdoc cref="IBuildLibraryUtil"/> 
 public sealed class BuildLibraryUtil : IBuildLibraryUtil
 {
-    private const string ReproEnv = "SOURCE_DATE_EPOCH=1620000000 TZ=UTC LC_ALL=C";
+    private const string _reproEnv = "SOURCE_DATE_EPOCH=1620000000 TZ=UTC LC_ALL=C";
 
     // NOTE: gettext was removed; autoconf + perl were added (needed for ./configure generation)
-    private const string InstallScript = "sudo apt-get update && " + "sudo apt-get install -y build-essential pkg-config autoconf perl gettext " +
+    private const string _installScript = "sudo apt-get update && " + "sudo apt-get install -y build-essential pkg-config autoconf perl gettext " +
                                          "libcurl4-openssl-dev libssl-dev libexpat1-dev zlib1g-dev";
 
     private readonly ILogger<BuildLibraryUtil> _logger;
@@ -30,17 +29,15 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
     private readonly IHttpClientCache _httpClientCache;
     private readonly IFileDownloadUtil _fileDownloadUtil;
     private readonly IProcessUtil _processUtil;
-    private readonly IFileUtil _fileUtil;
 
     public BuildLibraryUtil(ILogger<BuildLibraryUtil> logger, IDirectoryUtil directoryUtil, IHttpClientCache httpClientCache,
-        IFileDownloadUtil fileDownloadUtil, IProcessUtil processUtil, IFileUtil fileUtil)
+        IFileDownloadUtil fileDownloadUtil, IProcessUtil processUtil)
     {
         _logger = logger;
         _directoryUtil = directoryUtil;
         _httpClientCache = httpClientCache;
         _fileDownloadUtil = fileDownloadUtil;
         _processUtil = processUtil;
-        _fileUtil = fileUtil;
     }
 
     public async ValueTask<string> Build(CancellationToken cancellationToken)
@@ -54,19 +51,19 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         await _fileDownloadUtil.Download($"https://github.com/git/git/archive/refs/tags/{tag}.tar.gz", srcTgz, cancellationToken: cancellationToken);
 
         // ── 2. deps & extract ──────────────────────────────────────────────────────
-        await _processUtil.BashRun(InstallScript, tempDir, cancellationToken: cancellationToken);
+        await _processUtil.BashRun(_installScript, tempDir, cancellationToken: cancellationToken);
 
-        await _processUtil.BashRun($"{ReproEnv} tar --sort=name --mtime=@1620000000 " + "--owner=0 --group=0 --numeric-owner -xzf git.tar.gz", tempDir,
+        await _processUtil.BashRun($"{_reproEnv} tar --sort=name --mtime=@1620000000 " + "--owner=0 --group=0 --numeric-owner -xzf git.tar.gz", tempDir,
             cancellationToken: cancellationToken);
 
         string srcDir = Path.Combine(tempDir, $"git-{tag.TrimStart('v')}");
 
         // ── 3. configure (flat prefix + runtime) ───────────────────────────────────
-        await _processUtil.BashRun($"{ReproEnv} make configure", srcDir, cancellationToken: cancellationToken);
+        await _processUtil.BashRun($"{_reproEnv} make configure", srcDir, cancellationToken: cancellationToken);
 
         string stageDir = Path.Combine(tempDir, "git"); // final bundle root
 
-        await _processUtil.BashRun($"{ReproEnv} ./configure --prefix=/usr --with-curl " + "--with-openssl --without-readline --without-tcltk", srcDir,
+        await _processUtil.BashRun($"{_reproEnv} ./configure --prefix=/usr --with-curl " + "--with-openssl --without-readline --without-tcltk", srcDir,
             cancellationToken: cancellationToken);
 
         // ── 4. build & install *only* needed progs ─────────────────────────────────
@@ -79,9 +76,9 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         // and 'INSTALL_SYMLINKS' will create the necessary aliases.
         const string Needed = "PROGRAMS='git git-remote-http'";
 
-        await _processUtil.BashRun($"{ReproEnv} {Needed} {CommonFlags} make -j{Environment.ProcessorCount}", srcDir, cancellationToken: cancellationToken);
+        await _processUtil.BashRun($"{_reproEnv} {Needed} {CommonFlags} make -j{Environment.ProcessorCount}", srcDir, cancellationToken: cancellationToken);
 
-        await _processUtil.BashRun($"{ReproEnv} {Needed} {CommonFlags} INSTALL_STRIP=yes make install DESTDIR={stageDir}", srcDir,
+        await _processUtil.BashRun($"{_reproEnv} {Needed} {CommonFlags} INSTALL_STRIP=yes make install DESTDIR={stageDir}", srcDir,
             cancellationToken: cancellationToken);
 
         // ── 5. bundle & strip shared libs ──────────────────────────────────────────
