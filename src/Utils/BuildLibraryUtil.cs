@@ -61,9 +61,10 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         await _processUtil.BashRun($"{_reproEnv} make configure", srcDir, cancellationToken: cancellationToken);
 
         // Set reproducible compiler flags
-        string reproducibleEnv =
+        const string reproducibleEnv =
             "env SOURCE_DATE_EPOCH=1620000000 TZ=UTC LC_ALL=C " +
-            "CFLAGS=\"-O2 -g0 -frandom-seed=gitbuild\" LDFLAGS=\"--build-id=none\"";
+            "CFLAGS=\"-O2 -g0 -frandom-seed=gitbuild\" " +
+            "LDFLAGS=\"-Wl,--build-id=none\"";
 
         await _processUtil.BashRun($"{reproducibleEnv} ./configure --prefix=/usr --with-curl --with-openssl --without-readline --without-tcltk",
             srcDir, cancellationToken: cancellationToken);
