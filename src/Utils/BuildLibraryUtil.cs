@@ -61,19 +61,21 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         await _processUtil.BashRun($"{_reproEnv} make configure", srcDir, cancellationToken: cancellationToken);
 
         // Set reproducible compiler flags
-        string reproducibleFlags = "CFLAGS='-O2 -g0 -frandom-seed=gitbuild' " + "LDFLAGS='--build-id=none'";
+        string reproducibleEnv =
+            "env SOURCE_DATE_EPOCH=1620000000 TZ=UTC LC_ALL=C " +
+            "CFLAGS=\"-O2 -g0 -frandom-seed=gitbuild\" LDFLAGS=\"--build-id=none\"";
 
-        await _processUtil.BashRun($"{_reproEnv} {reproducibleFlags} ./configure --prefix=/usr --with-curl --with-openssl --without-readline --without-tcltk",
+        await _processUtil.BashRun($"{reproducibleEnv} ./configure --prefix=/usr --with-curl --with-openssl --without-readline --without-tcltk",
             srcDir, cancellationToken: cancellationToken);
 
         const string CommonFlags = "NO_PERL=1 NO_GETTEXT=YesPlease NO_TCLTK=1 NO_PYTHON=1 NO_ICONV=1 " +
                                    "NO_INSTALL_HARDLINKS=YesPlease INSTALL_SYMLINKS=YesPlease SKIP_DASHED_BUILT_INS=YesPlease RUNTIME_PREFIX=YesPlease";
         const string Needed = "PROGRAMS='git git-remote-http'";
 
-        await _processUtil.BashRun($"{_reproEnv} {reproducibleFlags} {Needed} {CommonFlags} make -j{Environment.ProcessorCount}", srcDir,
+        await _processUtil.BashRun($"{reproducibleEnv} {Needed} {CommonFlags} make -j{Environment.ProcessorCount}", srcDir,
             cancellationToken: cancellationToken);
 
-        await _processUtil.BashRun($"{_reproEnv} {reproducibleFlags} {Needed} {CommonFlags} INSTALL_STRIP=yes make install DESTDIR={stageDir}", srcDir,
+        await _processUtil.BashRun($"{reproducibleEnv} {Needed} {CommonFlags} INSTALL_STRIP=yes make install DESTDIR={stageDir}", srcDir,
             cancellationToken: cancellationToken);
 
         // Normalize timestamps to SOURCE_DATE_EPOCH
