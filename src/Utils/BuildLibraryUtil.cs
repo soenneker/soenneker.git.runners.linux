@@ -1,15 +1,12 @@
 using Microsoft.Extensions.Logging;
 using Soenneker.Extensions.ValueTask;
 using Soenneker.Git.Runners.Linux.Utils.Abstract;
+using Soenneker.GitHub.Repositories.Tags.Abstract;
 using Soenneker.Utils.Directory.Abstract;
 using Soenneker.Utils.File.Download.Abstract;
-using Soenneker.Utils.HttpClientCache.Abstract;
 using Soenneker.Utils.Process.Abstract;
 using System;
 using System.IO;
-using System.Net.Http;
-using System.Net.Http.Json;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -19,23 +16,22 @@ namespace Soenneker.Git.Runners.Linux.Utils;
 public sealed class BuildLibraryUtil : IBuildLibraryUtil
 {
     private const string _epoch = "1620000000";
-    private const string _reproEnv = "SOURCE_DATE_EPOCH=" + _epoch + " TZ=UTC LC_ALL=C";
+    private const string _reproEnv = $"SOURCE_DATE_EPOCH={_epoch} TZ=UTC LC_ALL=C";
 
-    private const string _installScript = "sudo apt-get update && " + "sudo apt-get install -y build-essential pkg-config autoconf perl gettext " +
-                                          "libcurl4-openssl-dev libssl-dev libexpat1-dev zlib1g-dev";
+    private const string _installScript = "sudo apt-get update && sudo apt-get install -y build-essential pkg-config autoconf perl gettext libcurl4-openssl-dev libssl-dev libexpat1-dev zlib1g-dev";
 
     private readonly ILogger<BuildLibraryUtil> _logger;
     private readonly IDirectoryUtil _directoryUtil;
-    private readonly IHttpClientCache _httpClientCache;
+    private readonly IGitHubRepositoriesTagsUtil _tagsUtil;
     private readonly IFileDownloadUtil _fileDownloadUtil;
     private readonly IProcessUtil _processUtil;
 
-    public BuildLibraryUtil(ILogger<BuildLibraryUtil> logger, IDirectoryUtil directoryUtil, IHttpClientCache httpClientCache,
+    public BuildLibraryUtil(ILogger<BuildLibraryUtil> logger, IDirectoryUtil directoryUtil, IGitHubRepositoriesTagsUtil tagsUtil,
         IFileDownloadUtil fileDownloadUtil, IProcessUtil processUtil)
     {
         _logger = logger;
         _directoryUtil = directoryUtil;
-        _httpClientCache = httpClientCache;
+        _tagsUtil = tagsUtil;
         _fileDownloadUtil = fileDownloadUtil;
         _processUtil = processUtil;
     }
@@ -43,7 +39,7 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
     public async ValueTask<string> Build(CancellationToken cancellationToken)
     {
         string tempDir = await _directoryUtil.CreateTempDirectory(cancellationToken).NoSync();
-        string tag = await GetLatestStableGitTag(cancellationToken);
+        string tag = await _tagsUtil.GetLatestStableTag("git", "git", cancellationToken);
 
         _logger.LogInformation("Latest stable Git tag: {tag}", tag);
 
@@ -61,13 +57,11 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         await _processUtil.BashRun($"{_reproEnv} make configure", srcDir, cancellationToken: cancellationToken);
 
         // Set reproducible compiler flags
-        const string reproducibleEnv =
-            "env SOURCE_DATE_EPOCH=1620000000 TZ=UTC LC_ALL=C " +
-            "CFLAGS=\"-O2 -g0 -frandom-seed=gitbuild\" " +
-            "LDFLAGS=\"-Wl,--build-id=none\"";
+        const string reproducibleEnv = "env SOURCE_DATE_EPOCH=1620000000 TZ=UTC LC_ALL=C " + "CFLAGS=\"-O2 -g0 -frandom-seed=gitbuild\" " +
+                                       "LDFLAGS=\"-Wl,--build-id=none\"";
 
-        await _processUtil.BashRun($"{reproducibleEnv} ./configure --prefix=/usr --with-curl --with-openssl --without-readline --without-tcltk",
-            srcDir, cancellationToken: cancellationToken);
+        await _processUtil.BashRun($"{reproducibleEnv} ./configure --prefix=/usr --with-curl --with-openssl --without-readline --without-tcltk", srcDir,
+            cancellationToken: cancellationToken);
 
         const string CommonFlags = "NO_PERL=1 NO_GETTEXT=YesPlease NO_TCLTK=1 NO_PYTHON=1 NO_ICONV=1 " +
                                    "NO_INSTALL_HARDLINKS=YesPlease INSTALL_SYMLINKS=YesPlease SKIP_DASHED_BUILT_INS=YesPlease RUNTIME_PREFIX=YesPlease";
@@ -107,7 +101,7 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
 
     private async ValueTask NormalizeTimestamps(string dir, CancellationToken ct)
     {
-        string cmd = $"find \"{dir}\" -print0 | xargs -0 touch -d @{_epoch}";
+        var cmd = $"find \"{dir}\" -print0 | xargs -0 touch -d @{_epoch}";
         await _processUtil.BashRun(cmd, dir, cancellationToken: ct);
     }
 
@@ -116,25 +110,5 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         string cmd = "find \"" + root + "\" -type f \\( -perm -u+x -o -name '*.so*' \\) " +
                      "-exec sh -c 'file -b \"$1\" | grep -q ELF && strip --strip-unneeded \"$1\"' _ {} \\;";
         await _processUtil.BashRun(cmd, root, cancellationToken: ct);
-    }
-
-    public async ValueTask<string> GetLatestStableGitTag(CancellationToken cancellationToken = default)
-    {
-        HttpClient client = await _httpClientCache.Get(nameof(BuildLibraryUtil), cancellationToken: cancellationToken);
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("DotNetGitTool/1.0");
-
-        JsonElement[]? tags = await client.GetFromJsonAsync<JsonElement[]>("https://api.github.com/repos/git/git/tags", cancellationToken);
-
-        foreach (JsonElement tag in tags!)
-        {
-            string name = tag.GetProperty("name").GetString()!;
-            if (!name.Contains("-rc", StringComparison.OrdinalIgnoreCase) && !name.Contains("-beta", StringComparison.OrdinalIgnoreCase) &&
-                !name.Contains("-alpha", StringComparison.OrdinalIgnoreCase))
-            {
-                return name;
-            }
-        }
-
-        throw new InvalidOperationException("No stable Git version found.");
     }
 }
