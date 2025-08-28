@@ -63,8 +63,9 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         await _processUtil.BashRun($"{reproducibleEnv} ./configure --prefix=/usr --with-curl --with-openssl --without-readline --without-tcltk", srcDir,
             cancellationToken: cancellationToken);
 
-        const string commonFlags = "NO_PERL=1 NO_GETTEXT=YesPlease NO_TCLTK=1 NO_PYTHON=1 NO_ICONV=1 " +
-                                   "NO_INSTALL_HARDLINKS=YesPlease INSTALL_SYMLINKS=YesPlease SKIP_DASHED_BUILT_INS=YesPlease RUNTIME_PREFIX=YesPlease";
+        const string commonFlags =
+            "NO_PERL=1 NO_GETTEXT=YesPlease NO_TCLTK=1 NO_PYTHON=1 NO_ICONV=1 " +
+            "SKIP_DASHED_BUILT_INS=YesPlease RUNTIME_PREFIX=YesPlease";
 
         const string needed = "PROGRAMS='git git-remote-http git-remote-https'";
 
@@ -73,6 +74,11 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
 
         await _processUtil.BashRun($"{reproducibleEnv} {needed} {commonFlags} INSTALL_STRIP=yes make install DESTDIR={stageDir}", srcDir,
             cancellationToken: cancellationToken);
+
+        // Debug: Check what was actually built and installed
+        _logger.LogInformation("Checking what was built and installed...");
+        await _processUtil.BashRun("ls -la usr/libexec/git-core/", stageDir, cancellationToken: cancellationToken);
+        await _processUtil.BashRun("ls -la usr/bin/", stageDir, cancellationToken: cancellationToken);
 
         // Normalize timestamps to SOURCE_DATE_EPOCH
         await NormalizeTimestamps(stageDir, cancellationToken);
