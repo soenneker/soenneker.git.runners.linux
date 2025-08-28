@@ -39,45 +39,46 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
 
     public async ValueTask<string> Build(CancellationToken cancellationToken)
     {
+        // 0) Paths
         string tempDir = await _directoryUtil.CreateTempDirectory(cancellationToken).NoSync();
         string tag = await _tagsUtil.GetLatestStableTag("git", "git", cancellationToken);
-
         _logger.LogInformation("Latest stable Git tag: {tag}", tag);
 
         string srcTgz = Path.Combine(tempDir, "git.tar.gz");
         await _fileDownloadUtil.Download($"https://github.com/git/git/archive/refs/tags/{tag}.tar.gz", srcTgz, cancellationToken: cancellationToken);
 
+        // 1) Build prerequisites
         await _processUtil.BashRun(_installScript, tempDir, cancellationToken: cancellationToken);
 
+        // 2) Unpack sources
         await _processUtil.BashRun($"{_reproEnv} tar --sort=name --mtime=@{_epoch} --owner=0 --group=0 --numeric-owner -xzf git.tar.gz", tempDir,
             cancellationToken: cancellationToken);
 
         string srcDir = Path.Combine(tempDir, $"git-{tag.TrimStart('v')}");
         string stageDir = Path.Combine(tempDir, "git");
 
+        // 3) Configure
         await _processUtil.BashRun($"{_reproEnv} make configure", srcDir, cancellationToken: cancellationToken);
 
-        // Reproducible compiler/linker flags
         const string reproducibleEnv = "env SOURCE_DATE_EPOCH=1620000000 TZ=UTC LC_ALL=C " + "CFLAGS=\"-O2 -g0 -frandom-seed=gitbuild\" " +
                                        "LDFLAGS=\"-Wl,--build-id=none\"";
 
         await _processUtil.BashRun($"{reproducibleEnv} ./configure --prefix=/usr --with-curl --with-openssl --without-tcltk", srcDir,
             cancellationToken: cancellationToken);
 
-        // Lean build; no special hardlink/symlink flags
+        // 4) Build minimal set
         const string commonFlags = "NO_PERL=1 NO_GETTEXT=YesPlease NO_TCLTK=1 NO_PYTHON=1 NO_ICONV=1 " +
                                    "SKIP_DASHED_BUILT_INS=YesPlease RUNTIME_PREFIX=YesPlease";
-
         const string needed = "PROGRAMS='git git-remote-http git-remote-https'";
 
         await _processUtil.BashRun($"{reproducibleEnv} {needed} {commonFlags} make -j{Environment.ProcessorCount}", srcDir,
             cancellationToken: cancellationToken);
 
-        // Install into stage
+        // 5) Install to stage
         await _processUtil.BashRun($"{reproducibleEnv} {needed} {commonFlags} INSTALL_STRIP=yes make install DESTDIR={stageDir}", srcDir,
             cancellationToken: cancellationToken);
 
-        // --- Guarantee HTTPS helper exists in the staged tree ---
+        // 6) Ensure HTTPS helper exists in stage
         string coreDir = Path.Combine(stageDir, "usr", "libexec", "git-core");
         Directory.CreateDirectory(coreDir);
         string https = Path.Combine(coreDir, "git-remote-https");
@@ -88,63 +89,75 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         {
             if (File.Exists(http))
             {
-                // Size-neutral wrapper; survives any copy tooling
                 string wrapper = "#!/bin/sh\nexec \"$(dirname \"$0\")/git-remote-http\" \"$@\"\n";
                 await File.WriteAllTextAsync(https, wrapper, cancellationToken);
                 await _processUtil.BashRun($"chmod +x \"{https}\"", coreDir, cancellationToken: cancellationToken);
-                await _processUtil.BashRun($"touch -d @{_epoch} \"{https}\"", coreDir, cancellationToken: cancellationToken);
-                _logger.LogInformation("Created git-remote-https wrapper -> git-remote-http in stage.");
             }
             else if (File.Exists(curl))
             {
-                // Fallback to copying payload if http alias wasn't materialized
                 await _processUtil.BashRun($"install -m 0755 \"{curl}\" \"{https}\"", coreDir, cancellationToken: cancellationToken);
-                await _processUtil.BashRun($"touch -d @{_epoch} \"{https}\"", coreDir, cancellationToken: cancellationToken);
-                _logger.LogInformation("Materialized git-remote-https by copying remote-curl in stage.");
             }
             else
             {
-                _logger.LogWarning("Neither git-remote-http nor remote-curl found; HTTPS helper may be missing.");
+                throw new InvalidOperationException("Missing remote helpers (git-remote-http/remote-curl); cannot create git-remote-https.");
             }
-        }
-        // --------------------------------------------------------
 
-        // Debug: confirm helpers in stage
-        _logger.LogInformation("Checking what was built and installed...");
+            await _processUtil.BashRun($"touch -d @{_epoch} \"{https}\"", coreDir, cancellationToken: cancellationToken);
+        }
+
+        // Debug in stage
+        _logger.LogInformation("Checking what was built and installed (stage)...");
         await _processUtil.BashRun("ls -la usr/libexec/git-core/ | egrep 'git-remote-(http|https)|remote-curl' || true", stageDir,
             cancellationToken: cancellationToken);
-        await _processUtil.BashRun("ls -la usr/bin/", stageDir, cancellationToken: cancellationToken);
 
-        // Normalize timestamps to SOURCE_DATE_EPOCH
+        // 7) Repro touches + stripping
         await NormalizeTimestamps(stageDir, cancellationToken);
-
-        // Strip ELF files
         await StripAllElfFiles(stageDir, cancellationToken);
 
-        // Remove extra files we don’t ship
+        // 8) Trim extras
         string shareDir = Path.Combine(stageDir, "usr", "share");
         if (Directory.Exists(shareDir))
             await _processUtil.BashRun($"rm -rf \"{shareDir}\"", stageDir, cancellationToken: cancellationToken);
 
-        // Create launcher with self-healing for git-remote-https
+        // 9) Launcher (plain)
         string wrapperPath = Path.Combine(stageDir, "git.sh");
-        string script = "#!/bin/bash\n" + "set -euo pipefail\n" + "DIR=$(dirname \"$(readlink -f \"$0\")\")\n" + "core=\"$DIR/usr/libexec/git-core\"\n" + "\n" +
-                        "# Self-heal if copy/publish dropped the https helper\n" + "if [ ! -x \"$core/git-remote-https\" ]; then\n" +
-                        "  if [ -x \"$core/git-remote-http\" ]; then\n" +
-                        "    printf '#!/bin/sh\\nexec \"$(dirname \"$0\")/git-remote-http\" \"$@\"\\n' > \"$core/git-remote-https\"\n" +
-                        "    chmod +x \"$core/git-remote-https\"\n" + "    touch -d @" + _epoch + " \"$core/git-remote-https\" || true\n" +
-                        "  elif [ -x \"$core/remote-curl\" ]; then\n" + "    install -m 0755 \"$core/remote-curl\" \"$core/git-remote-https\"\n" +
-                        "    touch -d @" + _epoch + " \"$core/git-remote-https\" || true\n" + "  fi\n" + "fi\n" + "\n" +
-                        "export LD_LIBRARY_PATH=\"$DIR/lib:${LD_LIBRARY_PATH:-}\"\n" + "export PATH=\"$core:$PATH\"\n" + "exec \"$DIR/usr/bin/git\" \"$@\"";
+        string script = "#!/bin/bash\n" + "set -euo pipefail\n" + "DIR=$(dirname \"$(readlink -f \"$0\")\")\n" +
+                        "export LD_LIBRARY_PATH=\"$DIR/lib:${LD_LIBRARY_PATH:-}\"\n" + "export PATH=\"$DIR/usr/libexec/git-core:$PATH\"\n" +
+                        "exec \"$DIR/usr/bin/git\" \"$@\"";
         await File.WriteAllTextAsync(wrapperPath, script, cancellationToken);
         await _processUtil.BashRun($"chmod +x \"{wrapperPath}\"", stageDir, cancellationToken: cancellationToken);
 
-        _logger.LogInformation("Verifying Git HTTPS support…");
+        // 10) Verify HTTPS from stage
+        _logger.LogInformation("Verifying Git HTTPS support (stage)...");
         string verifyDir = Path.Combine(tempDir, "clone-test");
         await _processUtil.BashRun($"{wrapperPath} clone --depth 1 https://github.com/git/git \"{verifyDir}\"", tempDir, cancellationToken: cancellationToken);
 
-        _logger.LogInformation("Reproducible Git bundle built at {path}", stageDir);
-        return stageDir;
+        // 11) PUBLISH to the same path your job later uses:
+        //     <AppContext.BaseDirectory>/Resources/linux-x64/git
+        var baseDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var resourcesGitDir = Path.Combine(baseDir, "Resources", "linux-x64", "git");
+        Directory.CreateDirectory(resourcesGitDir);
+
+        // robust mirror without relying on rsync
+        string mirrorCmd = "( set -e; " + $"cd \"{stageDir}\" && tar -cpf - . ) | " + $"( cd \"{resourcesGitDir}\" && tar -xpf - )";
+        await _processUtil.BashRun(mirrorCmd, "/", cancellationToken: cancellationToken);
+
+        // Ensure perms survived on https helper and wrapper
+        await _processUtil.BashRun("chmod +x usr/libexec/git-core/git-remote-https || true", resourcesGitDir, cancellationToken: cancellationToken);
+        await _processUtil.BashRun("chmod +x git.sh", resourcesGitDir, cancellationToken: cancellationToken);
+
+        // 12) Final verify FROM RESOURCES PATH (the one that later fails in your logs)
+        _logger.LogInformation("Verifying Git HTTPS support (Resources tree)...");
+        await _processUtil.BashRun("./git.sh --version", resourcesGitDir, cancellationToken: cancellationToken);
+        await _processUtil.BashRun("./git.sh --exec-path", resourcesGitDir, cancellationToken: cancellationToken);
+        await _processUtil.BashRun("ls -la usr/libexec/git-core/ | egrep 'git-remote-(http|https)|remote-curl' || true", resourcesGitDir,
+            cancellationToken: cancellationToken);
+        string verifyDir2 = Path.Combine(tempDir, "clone-test-resources");
+        await _processUtil.BashRun($"./git.sh clone --depth 1 https://github.com/git/git \"{verifyDir2}\"", resourcesGitDir,
+            cancellationToken: cancellationToken);
+
+        _logger.LogInformation("Ready bundle at {path}", resourcesGitDir);
+        return resourcesGitDir;
     }
 
     private async ValueTask NormalizeTimestamps(string dir, CancellationToken ct)
