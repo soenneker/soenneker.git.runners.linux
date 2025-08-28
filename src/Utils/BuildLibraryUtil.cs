@@ -69,21 +69,51 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
 
         const string needed = "PROGRAMS='git git-remote-http git-remote-https'";
 
+        // build
         await _processUtil.BashRun($"{reproducibleEnv} {needed} {commonFlags} make -j{Environment.ProcessorCount}", srcDir,
             cancellationToken: cancellationToken);
 
+        // install into stage
         await _processUtil.BashRun($"{reproducibleEnv} {needed} {commonFlags} INSTALL_STRIP=yes make install DESTDIR={stageDir}", srcDir,
             cancellationToken: cancellationToken);
 
-        // Debug: Check what was actually built and installed
-        _logger.LogInformation("Checking what was built and installed...");
-        await _processUtil.BashRun("ls -la usr/libexec/git-core/", stageDir, cancellationToken: cancellationToken);
-        await _processUtil.BashRun("ls -la usr/bin/", stageDir, cancellationToken: cancellationToken);
+        // ---- ensure git-remote-https is present (AFTER install, BEFORE normalize/strip) ----
+        string coreDir = Path.Combine(stageDir, "usr", "libexec", "git-core");
+        Directory.CreateDirectory(coreDir); // just in case
 
-        // Normalize timestamps to SOURCE_DATE_EPOCH
+        string https = Path.Combine(coreDir, "git-remote-https");
+        string http = Path.Combine(coreDir, "git-remote-http");
+        string curl = Path.Combine(coreDir, "remote-curl"); // actual helper binary
+
+        if (!File.Exists(https))
+        {
+            if (File.Exists(http))
+            {
+                // Size-neutral tiny wrapper
+                string wrappera = "#!/bin/sh\nexec \"$(dirname \"$0\")/git-remote-http\" \"$@\"\n";
+                await File.WriteAllTextAsync(https, wrappera, cancellationToken);
+                await _processUtil.BashRun($"chmod +x \"{https}\"", coreDir, cancellationToken: cancellationToken);
+                _logger.LogInformation("Created git-remote-https wrapper -> git-remote-http");
+            }
+            else if (File.Exists(curl))
+            {
+                // Byte copy to avoid shell wrapper if you prefer
+                await _processUtil.BashRun($"install -m 0755 \"{curl}\" \"{https}\"", coreDir, cancellationToken: cancellationToken);
+                _logger.LogInformation("Materialized git-remote-https by copying remote-curl");
+            }
+            else
+            {
+                _logger.LogWarning("Neither git-remote-http nor remote-curl found; HTTPS helper may be missing.");
+            }
+        }
+        // -----------------------------------------------------------------------------
+
+        // Debug: check helpers now in the staged tree
+        await _processUtil.BashRun("ls -la usr/libexec/git-core/ | grep -E 'git-remote-(http|https)|remote-curl' || true",
+            stageDir, cancellationToken: cancellationToken);
+
+        // Normalize timestamps & strip
         await NormalizeTimestamps(stageDir, cancellationToken);
-
-        // Strip ELF files
         await StripAllElfFiles(stageDir, cancellationToken);
 
         // Remove extra files
