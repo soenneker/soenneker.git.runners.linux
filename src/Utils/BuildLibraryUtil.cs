@@ -9,6 +9,7 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using Soenneker.Utils.File.Abstract;
 
 namespace Soenneker.Git.Runners.Linux.Utils;
 
@@ -26,15 +27,17 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
     private readonly IGitHubRepositoriesTagsUtil _tagsUtil;
     private readonly IFileDownloadUtil _fileDownloadUtil;
     private readonly IProcessUtil _processUtil;
+    private readonly IFileUtil _fileUtil;
 
     public BuildLibraryUtil(ILogger<BuildLibraryUtil> logger, IDirectoryUtil directoryUtil, IGitHubRepositoriesTagsUtil tagsUtil,
-        IFileDownloadUtil fileDownloadUtil, IProcessUtil processUtil)
+        IFileDownloadUtil fileDownloadUtil, IProcessUtil processUtil, IFileUtil fileUtil)
     {
         _logger = logger;
         _directoryUtil = directoryUtil;
         _tagsUtil = tagsUtil;
         _fileDownloadUtil = fileDownloadUtil;
         _processUtil = processUtil;
+        _fileUtil = fileUtil;
     }
 
     public async ValueTask<string> Build(CancellationToken cancellationToken)
@@ -80,7 +83,8 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
 
         // 6) Ensure HTTPS helper exists in stage
         string coreDir = Path.Combine(stageDir, "usr", "libexec", "git-core");
-        Directory.CreateDirectory(coreDir);
+        await _directoryUtil.CreateIfDoesNotExist(coreDir, cancellationToken: cancellationToken);
+
         string https = Path.Combine(coreDir, "git-remote-https");
         string http = Path.Combine(coreDir, "git-remote-http");
         string curl = Path.Combine(coreDir, "remote-curl");
@@ -89,7 +93,7 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         {
             if (File.Exists(http))
             {
-                string wrapper = "#!/bin/sh\nexec \"$(dirname \"$0\")/git-remote-http\" \"$@\"\n";
+                const string wrapper = "#!/bin/sh\nexec \"$(dirname \"$0\")/git-remote-http\" \"$@\"\n";
                 await File.WriteAllTextAsync(https, wrapper, cancellationToken);
                 await _processUtil.BashRun($"chmod +x \"{https}\"", coreDir, cancellationToken: cancellationToken);
             }
@@ -116,7 +120,8 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
 
         // 8) Trim extras
         string shareDir = Path.Combine(stageDir, "usr", "share");
-        if (Directory.Exists(shareDir))
+
+        if (await _directoryUtil.Exists(shareDir, cancellationToken))
             await _processUtil.BashRun($"rm -rf \"{shareDir}\"", stageDir, cancellationToken: cancellationToken);
 
         // 9) Launcher (plain)
@@ -124,7 +129,8 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         string script = "#!/bin/bash\n" + "set -euo pipefail\n" + "DIR=$(dirname \"$(readlink -f \"$0\")\")\n" +
                         "export LD_LIBRARY_PATH=\"$DIR/lib:${LD_LIBRARY_PATH:-}\"\n" + "export PATH=\"$DIR/usr/libexec/git-core:$PATH\"\n" +
                         "exec \"$DIR/usr/bin/git\" \"$@\"";
-        await File.WriteAllTextAsync(wrapperPath, script, cancellationToken);
+
+        await _fileUtil.Write(wrapperPath, script, true, cancellationToken);
         await _processUtil.BashRun($"chmod +x \"{wrapperPath}\"", stageDir, cancellationToken: cancellationToken);
 
         // 10) Verify HTTPS from stage
@@ -134,9 +140,9 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
 
         // 11) PUBLISH to the same path your job later uses:
         //     <AppContext.BaseDirectory>/Resources/linux-x64/git
-        var baseDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var resourcesGitDir = Path.Combine(baseDir, "Resources", "linux-x64", "git");
-        Directory.CreateDirectory(resourcesGitDir);
+        string baseDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string resourcesGitDir = Path.Combine(baseDir, "Resources", "linux-x64", "git");
+        await _directoryUtil.CreateIfDoesNotExist(resourcesGitDir, cancellationToken: cancellationToken);
 
         // robust mirror without relying on rsync
         string mirrorCmd = "( set -e; " + $"cd \"{stageDir}\" && tar -cpf - . ) | " + $"( cd \"{resourcesGitDir}\" && tar -xpf - )";
