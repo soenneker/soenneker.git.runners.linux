@@ -83,7 +83,7 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
 
         // 6) Ensure HTTPS helper exists in stage
         string coreDir = Path.Combine(stageDir, "usr", "libexec", "git-core");
-        await _directoryUtil.CreateIfDoesNotExist(coreDir, cancellationToken: cancellationToken);
+        await _directoryUtil.Create(coreDir, cancellationToken: cancellationToken);
 
         string https = Path.Combine(coreDir, "git-remote-https");
         string http = Path.Combine(coreDir, "git-remote-http");
@@ -142,7 +142,7 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         //     <AppContext.BaseDirectory>/Resources/linux-x64/git
         string baseDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         string resourcesGitDir = Path.Combine(baseDir, "Resources", "linux-x64", "git");
-        await _directoryUtil.CreateIfDoesNotExist(resourcesGitDir, cancellationToken: cancellationToken);
+        await _directoryUtil.Create(resourcesGitDir, cancellationToken: cancellationToken);
 
         // robust mirror without relying on rsync
         string mirrorCmd = "( set -e; " + $"cd \"{stageDir}\" && tar -cpf - . ) | " + $"( cd \"{resourcesGitDir}\" && tar -xpf - )";
