@@ -42,7 +42,7 @@ public sealed class ConsoleHostedService : IHostedService
                     string installDir = await _buildLibraryUtil.Build(cancellationToken);
 
                     await _runnersManager.PushIfChangesNeededForDirectory(Path.Combine("linux-x64", "git"), installDir, Constants.Library,
-                        $"https://github.com/soenneker/{Constants.Library}", true, cancellationToken);
+                        $"https://github.com/soenneker/{Constants.Library}", false, cancellationToken);
 
                     _logger.LogInformation("Complete!");
 
