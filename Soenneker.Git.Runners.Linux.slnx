@@ -6,7 +6,6 @@
     <File Path=".github/workflows/build-and-test.yml" />
     <File Path=".github/workflows/codeql.yml" />
     <File Path=".github/workflows/daily-automatic-update.yml" />
-    <File Path=".github/workflows/publish-package.yml" />
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/Soenneker.Git.Runners.Linux/Soenneker.Git.Runners.Linux.csproj" />
