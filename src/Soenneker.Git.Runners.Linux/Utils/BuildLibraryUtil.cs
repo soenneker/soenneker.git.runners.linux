@@ -126,9 +126,9 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
 
         // 9) Launcher (plain)
         string wrapperPath = Path.Combine(stageDir, "git.sh");
-        string script = "#!/bin/bash\n" + "set -euo pipefail\n" + "DIR=$(dirname \"$(readlink -f \"$0\")\")\n" +
-                        "export LD_LIBRARY_PATH=\"$DIR/lib:${LD_LIBRARY_PATH:-}\"\n" + "export PATH=\"$DIR/usr/libexec/git-core:$PATH\"\n" +
-                        "exec \"$DIR/usr/bin/git\" \"$@\"";
+        const string script = "#!/bin/bash\n" + "set -euo pipefail\n" + "DIR=$(dirname \"$(readlink -f \"$0\")\")\n" +
+                              "export LD_LIBRARY_PATH=\"$DIR/lib:${LD_LIBRARY_PATH:-}\"\n" + "export PATH=\"$DIR/usr/libexec/git-core:$PATH\"\n" +
+                              "exec \"$DIR/usr/bin/git\" \"$@\"";
 
         await _fileUtil.Write(wrapperPath, script, true, cancellationToken);
         await _processUtil.BashRun($"chmod +x \"{wrapperPath}\"", stageDir, cancellationToken: cancellationToken);

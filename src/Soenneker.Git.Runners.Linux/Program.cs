@@ -29,7 +29,8 @@ public sealed class Program
 
         try
         {
-            await CreateHostBuilder(args).RunConsoleAsync(_cts.Token);
+            await CreateHostBuilder(args)
+                .RunConsoleAsync(_cts.Token);
         }
         catch (Exception e)
         {
@@ -41,7 +42,8 @@ public sealed class Program
             Console.CancelKeyPress -= OnCancelKeyPress; // Detach the handler
 
             _cts.Dispose();
-            await Log.CloseAndFlushAsync().NoSync();
+            await Log.CloseAndFlushAsync()
+                     .NoSync();
         }
     }
 
@@ -54,16 +56,19 @@ public sealed class Program
 
         LoggerConfigurationExtension.BuildBootstrapLoggerAndSetGloballySync(envEnum);
 
-        IHostBuilder? host = Host.CreateDefaultBuilder(args)
-            .ConfigureAppConfiguration((hostingContext, builder) =>
-            {
-                builder.AddEnvironmentVariables();
-                builder.SetBasePath(hostingContext.HostingEnvironment.ContentRootPath);
+        IHostBuilder host = Host.CreateDefaultBuilder(args)
+                                .ConfigureAppConfiguration((hostingContext, builder) =>
+                                {
+                                    builder.AddEnvironmentVariables();
+                                    builder.SetBasePath(hostingContext.HostingEnvironment.ContentRootPath);
 
-                builder.Build();
-            })
-            .UseSerilog()
-            .ConfigureServices((_, services) => { Startup.ConfigureServices(services); });
+                                    builder.Build();
+                                })
+                                .UseSerilog()
+                                .ConfigureServices((_, services) =>
+                                {
+                                    Startup.ConfigureServices(services);
+                                });
 
         return host;
     }
