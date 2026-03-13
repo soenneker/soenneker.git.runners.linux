@@ -43,7 +43,7 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
     public async ValueTask<string> Build(CancellationToken cancellationToken)
     {
         // 0) Paths
-        string tempDir = await _directoryUtil.CreateTempDirectory(cancellationToken).NoSync();
+        string tempDir = await _directoryUtil.CreateTempDirectory(cancellationToken);
         string tag = await _tagsUtil.GetLatestStableTag("git", "git", cancellationToken);
         _logger.LogInformation("Latest stable Git tag: {tag}", tag);
 
