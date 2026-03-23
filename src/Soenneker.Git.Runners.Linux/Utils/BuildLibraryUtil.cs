@@ -89,15 +89,15 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         string http = Path.Combine(coreDir, "git-remote-http");
         string curl = Path.Combine(coreDir, "remote-curl");
 
-        if (!File.Exists(https))
+        if (!await _fileUtil.Exists(https, cancellationToken))
         {
-            if (File.Exists(http))
+            if (await _fileUtil.Exists(http, cancellationToken))
             {
                 const string wrapper = "#!/bin/sh\nexec \"$(dirname \"$0\")/git-remote-http\" \"$@\"\n";
-                await File.WriteAllTextAsync(https, wrapper, cancellationToken);
+                await _fileUtil.Write(https, wrapper, log: false, cancellationToken);
                 await _processUtil.BashRun($"chmod +x \"{https}\"", coreDir, cancellationToken: cancellationToken);
             }
-            else if (File.Exists(curl))
+            else if (await _fileUtil.Exists(curl, cancellationToken))
             {
                 await _processUtil.BashRun($"install -m 0755 \"{curl}\" \"{https}\"", coreDir, cancellationToken: cancellationToken);
             }
