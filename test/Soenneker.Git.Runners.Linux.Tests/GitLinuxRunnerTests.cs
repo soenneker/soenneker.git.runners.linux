@@ -1,16 +1,15 @@
-﻿using Soenneker.Tests.FixturedUnit;
-using Xunit;
+using Soenneker.Tests.HostedUnit;
 
 namespace Soenneker.Git.Runners.Linux.Tests;
 
-[Collection("Collection")]
-public sealed class GitLinuxRunnerTests : FixturedUnitTest
+[ClassDataSource<Host>(Shared = SharedType.PerTestSession)]
+public sealed class GitLinuxRunnerTests : HostedUnitTest
 {
-    public GitLinuxRunnerTests(Fixture fixture, ITestOutputHelper output) : base(fixture, output)
+    public GitLinuxRunnerTests(Host host) : base(host)
     {
     }
 
-    [Fact]
+    [Test]
     public void Default()
     {
 
