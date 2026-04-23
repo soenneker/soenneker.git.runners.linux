@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection;
 using Soenneker.Git.Runners.Linux.Utils;
 using Soenneker.Git.Runners.Linux.Utils.Abstract;
 using Soenneker.Managers.Runners.Registrars;
@@ -20,9 +20,9 @@ public static class Startup
     public static IServiceCollection SetupIoC(this IServiceCollection services)
     {
         services.AddHostedService<ConsoleHostedService>()
-                .AddScoped<IBuildLibraryUtil, BuildLibraryUtil>()
-                .AddFileDownloadUtilAsScoped()
-                .AddRunnersManagerAsScoped();
+                .AddSingleton<IBuildLibraryUtil, BuildLibraryUtil>()
+                .AddFileDownloadUtilAsSingleton()
+                .AddRunnersManagerAsSingleton();
 
         return services;
     }
