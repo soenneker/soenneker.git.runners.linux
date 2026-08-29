@@ -9,10 +9,10 @@ namespace Soenneker.Git.Runners.Linux.Utils.Abstract;
 public interface IFileOperationsUtil
 {
     /// <summary>
-    /// Executes the process operation.
+    /// Processes the pending work managed by the file operations.
     /// </summary>
-    /// <param name="filePath">The file path.</param>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>A task that represents the asynchronous operation.</returns>
+    /// <param name="filePath">Path of the file to use.</param>
+    /// <param name="cancellationToken">Token used to cancel the operation.</param>
+    /// <returns>A task that completes when the full processing workflow has finished.</returns>
     ValueTask Process(string filePath, CancellationToken cancellationToken);
 }
