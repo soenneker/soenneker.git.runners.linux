@@ -13,7 +13,6 @@ using Soenneker.Utils.File.Abstract;
 
 namespace Soenneker.Git.Runners.Linux.Utils;
 
-/// <inheritdoc cref="IBuildLibraryUtil"/>
 public sealed class BuildLibraryUtil : IBuildLibraryUtil
 {
     private const string _epoch = "1620000000";

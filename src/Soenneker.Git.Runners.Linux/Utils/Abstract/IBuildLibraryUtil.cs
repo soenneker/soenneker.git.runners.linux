@@ -4,14 +4,14 @@ using System.Threading.Tasks;
 namespace Soenneker.Git.Runners.Linux.Utils.Abstract;
 
 /// <summary>
-/// Defines the build library util contract.
+/// Builds the Linux Git distribution consumed by the runner.
 /// </summary>
 public interface IBuildLibraryUtil
 {
     /// <summary>
-    /// Builds build Library.
+    /// Builds and verifies a distributable Git directory.
     /// </summary>
     /// <param name="cancellationToken">Token used to cancel the operation.</param>
-    /// <returns>A task whose result is the text returned by build.</returns>
+    /// <returns>The path to the completed distribution directory.</returns>
     ValueTask<string> Build(CancellationToken cancellationToken);
 }
