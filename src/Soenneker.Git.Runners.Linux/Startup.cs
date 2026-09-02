@@ -3,6 +3,7 @@ using Soenneker.Git.Runners.Linux.Utils;
 using Soenneker.Git.Runners.Linux.Utils.Abstract;
 using Soenneker.Managers.Runners.Registrars;
 using Soenneker.Utils.File.Download.Registrars;
+using Soenneker.Utils.Paths.Resources.Registrars;
 
 namespace Soenneker.Git.Runners.Linux;
 
@@ -31,6 +32,7 @@ public static class Startup
         services.AddHostedService<ConsoleHostedService>()
                 .AddSingleton<IBuildLibraryUtil, BuildLibraryUtil>()
                 .AddFileDownloadUtilAsSingleton()
+                .AddResourcesPathUtilAsSingleton()
                 .AddRunnersManagerAsSingleton();
 
         return services;

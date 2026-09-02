@@ -10,6 +10,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Soenneker.Utils.File.Abstract;
+using Soenneker.Utils.Paths.Resources.Abstract;
 
 namespace Soenneker.Git.Runners.Linux.Utils;
 
@@ -27,9 +28,10 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
     private readonly IFileDownloadUtil _fileDownloadUtil;
     private readonly IProcessUtil _processUtil;
     private readonly IFileUtil _fileUtil;
+    private readonly IResourcesPathUtil _resourcesPathUtil;
 
     public BuildLibraryUtil(ILogger<BuildLibraryUtil> logger, IDirectoryUtil directoryUtil, IGitHubRepositoriesTagsUtil tagsUtil,
-        IFileDownloadUtil fileDownloadUtil, IProcessUtil processUtil, IFileUtil fileUtil)
+        IFileDownloadUtil fileDownloadUtil, IProcessUtil processUtil, IFileUtil fileUtil, IResourcesPathUtil resourcesPathUtil)
     {
         _logger = logger;
         _directoryUtil = directoryUtil;
@@ -37,6 +39,7 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         _fileDownloadUtil = fileDownloadUtil;
         _processUtil = processUtil;
         _fileUtil = fileUtil;
+        _resourcesPathUtil = resourcesPathUtil;
     }
 
     public async ValueTask<string> Build(CancellationToken cancellationToken)
@@ -138,9 +141,9 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         await _processUtil.BashRun($"{wrapperPath} clone --depth 1 https://github.com/git/git \"{verifyDir}\"", tempDir, cancellationToken: cancellationToken);
 
         // 11) PUBLISH to the same path your job later uses:
-        //     <AppContext.BaseDirectory>/Resources/linux-x64/git
-        string baseDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        string resourcesGitDir = Path.Combine(baseDir, "Resources", "linux-x64", "git");
+        //     <ResourcesPath>/linux-x64/git
+        string resourcesGitDir = await _resourcesPathUtil.GetResourceFilePath(Path.Combine("linux-x64", "git"), cancellationToken)
+                                                            .NoSync();
         await _directoryUtil.Create(resourcesGitDir, cancellationToken: cancellationToken);
 
         // robust mirror without relying on rsync
