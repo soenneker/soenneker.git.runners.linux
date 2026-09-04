@@ -45,6 +45,6 @@
         <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.11" />
         <PackageReference Include="Soenneker.Managers.Runners" Version="4.0.2433" />
         <PackageReference Include="Soenneker.Utils.File.Download" Version="4.0.1716" />
-        <PackageReference Include="Soenneker.Utils.Paths.Resources" Version="4.0.229" />
+        <PackageReference Include="Soenneker.Utils.Paths.Resources" Version="4.0.230" />
     </ItemGroup>
 </Project>
