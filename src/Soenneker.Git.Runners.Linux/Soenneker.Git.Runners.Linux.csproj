@@ -41,15 +41,15 @@
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="Soenneker.Extensions.LoggerConfiguration" Version="4.0.1394" />
+        <PackageReference Include="Soenneker.Extensions.LoggerConfiguration" Version="4.0.1399" />
         <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
-        <PackageReference Include="Soenneker.Managers.Runners" Version="4.0.2546" />
-        <PackageReference Include="Soenneker.Utils.File.Download" Version="4.0.1773" />
+        <PackageReference Include="Soenneker.Managers.Runners" Version="4.0.2550" />
+        <PackageReference Include="Soenneker.Utils.File.Download" Version="4.0.1775" />
     </ItemGroup>
     <ItemGroup>
-        <PackageReference Include="Soenneker.Enums.DeployEnvironment" Version="4.0.242" />
+        <PackageReference Include="Soenneker.Enums.DeployEnvironment" Version="4.0.244" />
     </ItemGroup>
     <ItemGroup>
-        <PackageReference Include="Soenneker.Extensions.ValueTask" Version="4.0.123" />
+        <PackageReference Include="Soenneker.Extensions.ValueTask" Version="4.0.124" />
     </ItemGroup>
 </Project>
