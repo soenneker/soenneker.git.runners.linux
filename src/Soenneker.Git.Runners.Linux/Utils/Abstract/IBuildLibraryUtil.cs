@@ -8,10 +8,9 @@ namespace Soenneker.Git.Runners.Linux.Utils.Abstract;
 /// </summary>
 public interface IBuildLibraryUtil
 {
-    /// <summary>
-    /// Gets the upstream release identifier from the most recently prepared distribution.
-    /// </summary>
-    string? UpdateDetails { get; }
+    /// <summary>Gets the version of the prepared distribution.</summary>
+    string? Version { get; }
+
 
     /// <summary>
     /// Builds and verifies a distributable Git directory.

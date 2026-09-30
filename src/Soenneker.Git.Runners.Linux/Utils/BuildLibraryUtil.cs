@@ -16,7 +16,8 @@ namespace Soenneker.Git.Runners.Linux.Utils;
 
 public sealed class BuildLibraryUtil : IBuildLibraryUtil
 {
-    public string? UpdateDetails { get; private set; }
+    public string? Version { get; private set; }
+
 
     private const string _epoch = "1620000000";
     private const string _reproEnv = $"SOURCE_DATE_EPOCH={_epoch} TZ=UTC LC_ALL=C";
@@ -167,7 +168,7 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
             cancellationToken: cancellationToken);
 
         _logger.LogInformation("Ready bundle at {path}", resourcesGitDir);
-        UpdateDetails = tag.TrimStart('v');
+        Version = tag.TrimStart('v');
         return resourcesGitDir;
     }
 
