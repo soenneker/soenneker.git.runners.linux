@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
@@ -50,7 +50,7 @@ public sealed class ConsoleHostedService : IHostedService
                     string installDir = await _buildLibraryUtil.Build(cancellationToken);
 
                     await _runnersManager.PushIfChangesNeededForDirectory(Path.Combine("linux-x64", "git"), installDir, Constants.Library,
-                        $"https://github.com/soenneker/{Constants.Library}", false, cancellationToken);
+                        $"https://github.com/soenneker/{Constants.Library}", false, cancellationToken, updateDetails: _buildLibraryUtil.UpdateDetails);
 
                     _logger.LogInformation("Complete!");
 

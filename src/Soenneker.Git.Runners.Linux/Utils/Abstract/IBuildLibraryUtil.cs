@@ -1,4 +1,4 @@
-﻿using System.Threading;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Soenneker.Git.Runners.Linux.Utils.Abstract;
@@ -8,6 +8,11 @@ namespace Soenneker.Git.Runners.Linux.Utils.Abstract;
 /// </summary>
 public interface IBuildLibraryUtil
 {
+    /// <summary>
+    /// Gets the upstream release identifier from the most recently prepared distribution.
+    /// </summary>
+    string? UpdateDetails { get; }
+
     /// <summary>
     /// Builds and verifies a distributable Git directory.
     /// </summary>

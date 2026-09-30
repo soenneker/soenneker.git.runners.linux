@@ -14,9 +14,10 @@ using Soenneker.Utils.Paths.Resources.Abstract;
 
 namespace Soenneker.Git.Runners.Linux.Utils;
 
-/// <inheritdoc cref="IBuildLibraryUtil" />
 public sealed class BuildLibraryUtil : IBuildLibraryUtil
 {
+    public string? UpdateDetails { get; private set; }
+
     private const string _epoch = "1620000000";
     private const string _reproEnv = $"SOURCE_DATE_EPOCH={_epoch} TZ=UTC LC_ALL=C";
 
@@ -166,6 +167,7 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
             cancellationToken: cancellationToken);
 
         _logger.LogInformation("Ready bundle at {path}", resourcesGitDir);
+        UpdateDetails = tag.TrimStart('v');
         return resourcesGitDir;
     }
 
