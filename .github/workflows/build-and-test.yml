@@ -34,6 +34,9 @@ jobs:
       - name: Restore tests
         run: dotnet restore test/Soenneker.Git.Runners.Linux.Tests/Soenneker.Git.Runners.Linux.Tests.csproj --verbosity minimal
 
+      - name: Verify native dependency collection
+        run: bash test/bundle-libraries.sh
+
       - name: Build tests
         run: dotnet build test/Soenneker.Git.Runners.Linux.Tests/Soenneker.Git.Runners.Linux.Tests.csproj --configuration Release --no-restore --verbosity minimal
 

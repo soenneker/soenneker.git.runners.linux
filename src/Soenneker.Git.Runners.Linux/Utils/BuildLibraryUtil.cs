@@ -23,7 +23,7 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
     private const string _reproEnv = $"SOURCE_DATE_EPOCH={_epoch} TZ=UTC LC_ALL=C";
 
     private const string _installScript =
-        "sudo apt-get update && sudo apt-get install -y build-essential pkg-config autoconf perl gettext libcurl4-openssl-dev libssl-dev libexpat1-dev zlib1g-dev";
+        "sudo apt-get update && sudo apt-get install -y build-essential pkg-config autoconf perl gettext file ca-certificates libcurl4-openssl-dev libssl-dev libexpat1-dev zlib1g-dev";
 
     private readonly ILogger<BuildLibraryUtil> _logger;
     private readonly IDirectoryUtil _directoryUtil;
@@ -119,24 +119,31 @@ public sealed class BuildLibraryUtil : IBuildLibraryUtil
         await _processUtil.BashRun("ls -la usr/libexec/git-core/ | egrep 'git-remote-(http|https)|remote-curl' || true", stageDir,
             cancellationToken: cancellationToken);
 
-        // 7) Repro touches + stripping
-        await NormalizeTimestamps(stageDir, cancellationToken);
+        // Collect native dependencies before stripping or publishing the bundle.
+        string bundleScript = Path.Combine(AppContext.BaseDirectory, "Scripts", "bundle-libraries.sh");
+        await _processUtil.BashRun($"bash \"{bundleScript}\" \"{stageDir}\"", stageDir, cancellationToken: cancellationToken);
+
+        // 7) Stripping
         await StripAllElfFiles(stageDir, cancellationToken);
 
-        // 8) Trim extras
-        string shareDir = Path.Combine(stageDir, "usr", "share");
-
-        if (await _directoryUtil.Exists(shareDir, cancellationToken))
-            await _processUtil.BashRun($"rm -rf \"{shareDir}\"", stageDir, cancellationToken: cancellationToken);
+        // Keep usr/share/git-core/templates for repository initialization.
 
         // 9) Launcher (plain)
         string wrapperPath = Path.Combine(stageDir, "git.sh");
         const string script = "#!/bin/bash\n" + "set -euo pipefail\n" + "DIR=$(dirname \"$(readlink -f \"$0\")\")\n" +
-                              "export LD_LIBRARY_PATH=\"$DIR/lib:${LD_LIBRARY_PATH:-}\"\n" + "export PATH=\"$DIR/usr/libexec/git-core:$PATH\"\n" +
+                              "export LD_LIBRARY_PATH=\"$DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}\"\n" +
+                              "export GIT_EXEC_PATH=\"$DIR/usr/libexec/git-core\"\n" +
+                              "export GIT_TEMPLATE_DIR=\"$DIR/usr/share/git-core/templates\"\n" +
+                              "export PATH=\"$DIR/usr/libexec/git-core:$PATH\"\n" +
                               "exec \"$DIR/usr/bin/git\" \"$@\"";
 
         await _fileUtil.Write(wrapperPath, script, true, cancellationToken);
         await _processUtil.BashRun($"chmod +x \"{wrapperPath}\"", stageDir, cancellationToken: cancellationToken);
+        await NormalizeTimestamps(stageDir, cancellationToken);
+
+        // The build host already has libcurl installed; only an isolated runtime catches omissions.
+        string verifyScript = Path.Combine(AppContext.BaseDirectory, "Scripts", "verify-bundle.sh");
+        await _processUtil.BashRun($"bash \"{verifyScript}\" \"{stageDir}\"", stageDir, cancellationToken: cancellationToken);
 
         // 10) Verify HTTPS from stage
         _logger.LogInformation("Verifying Git HTTPS support (stage)...");
