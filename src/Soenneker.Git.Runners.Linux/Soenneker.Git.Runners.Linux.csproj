@@ -45,13 +45,13 @@
     <ItemGroup>
         <PackageReference Include="Soenneker.Extensions.LoggerConfiguration" Version="11.0.1470" />
         <PackageReference Include="Microsoft.Extensions.Hosting" Version="11.0.0" />
-        <PackageReference Include="Soenneker.Managers.Runners" Version="11.0.2737" />
-        <PackageReference Include="Soenneker.Utils.File.Download" Version="11.0.1859" />
+        <PackageReference Include="Soenneker.Managers.Runners" Version="11.0.2739" />
+        <PackageReference Include="Soenneker.Utils.File.Download" Version="11.0.1861" />
     </ItemGroup>
     <ItemGroup>
-        <PackageReference Include="Soenneker.Enums.DeployEnvironment" Version="11.0.265" />
+        <PackageReference Include="Soenneker.Enums.DeployEnvironment" Version="11.0.266" />
     </ItemGroup>
     <ItemGroup>
-        <PackageReference Include="Soenneker.Extensions.ValueTask" Version="11.0.136" />
+        <PackageReference Include="Soenneker.Extensions.ValueTask" Version="11.0.137" />
     </ItemGroup>
 </Project>
